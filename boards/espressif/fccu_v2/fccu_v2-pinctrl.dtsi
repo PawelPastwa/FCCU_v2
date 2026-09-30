@@ -1,0 +1,133 @@
+#include <zephyr/dt-bindings/pinctrl/esp-pinctrl-common.h>
+#include <dt-bindings/pinctrl/esp32s3-pinctrl.h>
+#include <zephyr/dt-bindings/pinctrl/esp32s3-gpio-sigmap.h>
+
+&pinctrl {
+	uart0_default: uart0_default {
+		group1 {
+			pinmux = <UART0_TX_GPIO43>;
+			output-high;
+		};
+		group2 {
+			pinmux = <UART0_RX_GPIO44>;
+			bias-pull-up;
+		};
+	};
+
+	uart1_default: uart1_default {
+		group1 {
+			pinmux = <UART1_TX_GPIO17>;
+			output-high;
+		};
+		group2 {
+			pinmux = <UART1_RX_GPIO18>;
+			bias-pull-up;
+		};
+	};
+
+	i2c0_default: i2c0_default {
+		group1 {
+			pinmux = <I2C0_SDA_GPIO35>,
+					 <I2C0_SCL_GPIO34>;
+			bias-pull-up;
+			drive-open-drain;
+			output-high;
+		};
+	};
+
+	i2c1_default: i2c1_default {
+		group1 {
+			pinmux = <I2C1_SDA_GPIO4>,
+					 <I2C1_SCL_GPIO5>;
+			bias-pull-up;
+			drive-open-drain;
+			output-high;
+		};
+	};
+
+	i2s0_default: i2s0_default {
+		group1 {
+			pinmux = <I2S0_MCLK_GPIO4>,
+					 <I2S0_O_WS_GPIO5>,
+					 <I2S0_O_BCK_GPIO6>,
+					 <I2S0_O_SD_GPIO7>,
+					 <I2S0_I_WS_GPIO15>,
+					 <I2S0_I_BCK_GPIO16>;
+			output-enable;
+		};
+		group2 {
+			pinmux = <I2S0_I_SD_GPIO17>;
+			input-enable;
+		};
+	};
+
+	i2s1_default: i2s1_default {
+		group1 {
+			pinmux = <I2S1_MCLK_GPIO18>,
+					 <I2S1_O_WS_GPIO8>,
+					 <I2S1_O_BCK_GPIO3>,
+					 <I2S1_O_SD_GPIO9>,
+					 <I2S1_I_WS_GPIO10>,
+					 <I2S1_I_BCK_GPIO11>;
+			output-enable;
+		};
+		group2 {
+			pinmux = <I2S1_I_SD_GPIO12>;
+			input-enable;
+		};
+	};
+
+	spim2_default: spim2_default {
+		group1 {
+			pinmux = <SPIM2_MISO_GPIO13>,
+					 <SPIM2_SCLK_GPIO12>,
+					 <SPIM2_CSEL_GPIO10>;
+		};
+		group2 {
+			pinmux = <SPIM2_MOSI_GPIO11>;
+			output-low;
+		};
+	};
+
+
+	twai_default: twai_default {
+		group1 {
+			//Oryginalne fccu_v2
+			pinmux = <TWAI_TX_GPIO39>;
+
+			//esp32s3 super mini
+//			pinmux = <TWAI_TX_GPIO4>;
+			output-high; //Wymuszenie nadawania (wyjscie)
+		};
+		group2 {
+			//Oryginalne fccu_v2
+			pinmux = <TWAI_RX_GPIO40>;
+
+			//esp32s3 super mini
+//			pinmux = <TWAI_RX_GPIO5>;
+			bias-pull-up; //Podciagniecie do wejscia
+		};
+	};
+
+	//	mcpwm0_default: mcpwm0_default {
+	//		group1 {
+	//			pinmux = <MCPWM0_OUT0A_GPIO0>,
+	//					 <MCPWM0_OUT0B_GPIO2>,
+	//					 <MCPWM0_OUT1A_GPIO4>;
+	//			output-enable;
+	//		};
+	//		group2 {
+	//			pinmux = <MCPWM0_CAP0_GPIO5>;
+	//		};
+	//	};
+
+	ledc0_default: ledc0_default {
+		group1 {
+			pinmux = <LEDC_CH0_GPIO37>,
+					 <LEDC_CH1_GPIO17>,
+					 <LEDC_CH2_GPIO4>;
+			output-enable;
+		};
+	};
+};
+

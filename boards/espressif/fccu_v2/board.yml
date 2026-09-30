@@ -1,0 +1,6 @@
+board:
+  name: fccu_v2
+  full_name: Hydrogreen-FCCU-V2
+  vendor: hydrogreen
+  socs:
+    - name: esp32s3

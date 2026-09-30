@@ -1,0 +1,7 @@
+identifier: fccu_v2
+name: Hydrogreen-FCCU-V2
+type: mcu
+arch: xtensa
+toolchain:
+  - zephyr
+  - xtools

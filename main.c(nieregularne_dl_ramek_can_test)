@@ -1,0 +1,53 @@
+#include <zephyr/kernel.h>
+#include <zephyr/sys/printk.h>
+#include "can_definitions.h" // Twój wygenerowany plik DBC
+
+int main(void) {
+    k_msleep(2000);
+    printk("\n--- START TESTU KOMPRESJI I DEKOMPRESJI (RAM) ---\n");
+
+    while (1) {
+        // --- 1. WARTOŚCI TESTOWE ---
+        // Wybieramy liczby, żeby sprawdzić matematykę (rzutujemy ułamki)
+        float test_voltage = 12.5f;
+        float test_current = -7.2f;
+
+        printk("Wyslano do kompresji: Napiecie = %d V, Prad = %d A\n", (int)test_voltage, (int)test_current);
+
+        // --- 2. ENKODOWANIE (Matematyka DBC) ---
+        struct hydrogreen_can_definitions_fccu_power_t tx_data;
+        tx_data.fc_voltage = hydrogreen_can_definitions_fccu_power_fc_voltage_encode(test_voltage);
+        tx_data.fc_current = hydrogreen_can_definitions_fccu_power_fc_current_encode(test_current);
+        tx_data.dcdc_voltage = hydrogreen_can_definitions_fccu_power_dcdc_voltage_encode(0.0f);
+        tx_data.dcdc_current = hydrogreen_can_definitions_fccu_power_dcdc_current_encode(0.0f);
+        tx_data.load_current = hydrogreen_can_definitions_fccu_power_load_current_encode(0.0f);
+
+        // --- 3. PAKOWANIE (Struktura -> Surowe bajty) ---
+        // To tutaj układ radzi sobie z dziwnymi rozmiarami (np. 14 bit)
+        uint8_t payload[8] = {0};
+        hydrogreen_can_definitions_fccu_power_pack(payload, &tx_data, 8);
+
+        printk("Wygenerowany HEX: %02X %02X %02X %02X %02X %02X %02X %02X\n",
+               payload[0], payload[1], payload[2], payload[3],
+               payload[4], payload[5], payload[6], payload[7]);
+
+        // =================================================================
+        // Symulujemy odbiór ramki. Zamiast ciągnąć dane z can_receive(),
+        // podajemy bezpośrednio zapakowaną przed chwilą tablicę 'payload'.
+        // =================================================================
+
+        // --- 4. ROZPAKOWANIE (Surowe bajty -> Struktura) ---
+        struct hydrogreen_can_definitions_fccu_power_t rx_data;
+        hydrogreen_can_definitions_fccu_power_unpack(&rx_data, payload, 8);
+
+        // --- 5. DEKODOWANIE (Zastosowanie mnożnika z powrotem na ułamki) ---
+        float odebrane_napiecie = hydrogreen_can_definitions_fccu_power_fc_voltage_decode(rx_data.fc_voltage);
+        float odebrany_prad = hydrogreen_can_definitions_fccu_power_fc_current_decode(rx_data.fc_current);
+
+        // --- 6. WERYFIKACJA ---
+        printk("Zdekompresowano : Napiecie = %d V, Prad = %d A\n\n", (int)odebrane_napiecie, (int)odebrany_prad);
+
+        k_sleep(K_MSEC(2000));
+    }
+    return 0;
+}

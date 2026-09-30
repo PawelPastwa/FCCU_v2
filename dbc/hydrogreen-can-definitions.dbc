@@ -1,0 +1,242 @@
+VERSION ""
+
+NS_ :
+    NS_DESC_
+    CM_
+    BA_DEF_
+    BA_
+    VAL_
+    CAT_DEF_
+    CAT_
+    FILTER
+    BA_DEF_DEF_
+    EV_DATA_
+    ENVVAR_DATA_
+    SGTYPE_
+    SGTYPE_VAL_
+    BA_DEF_SGTYPE_
+    BA_SGTYPE_
+    SIG_TYPE_REF_
+    VAL_TABLE_
+    SIG_GROUP_
+    SIG_VALTYPE_
+    SIGTYPE_VALTYPE_
+    BO_TX_BU_
+    BA_DEF_REL_
+    BA_REL_
+    BA_DEF_DEF_REL_
+    BU_SG_REL_
+    BU_EV_REL_
+    BU_BO_REL_
+    SG_MUL_VAL_
+
+BS_:
+BU_: MCU SWU LCU FCCU TCU EDU CCU
+
+BO_ 1026 CCU_STATUS: 1 CCU
+   SG_ STATUS : 0|4@1+ (1,0) [0|4] "" Vector__XXX
+
+BO_ 265 MCU_TIME_SYNC: 8 MCU
+   SG_ TIME_MS : 0|32@1+ (1,0) [0|4294967295] "ms" Vector__XXX
+   SG_ CLOCK_CYCLES : 32|32@1+ (1,0) [0|4294967295] "" Vector__XXX
+
+BO_ 256 MCU_STATE: 2 MCU
+   SG_ STATUS : 0|4@1+ (1,0) [0|15] "" Vector__XXX
+   SG_ VEHICLE_TYPE : 4|4@1+ (1,0) [0|15] "" Vector__XXX
+   SG_ VEHICLE_ALLOWED_TO_MOVE : 8|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ MOTOR_CONTROLLER_ENABLED : 14|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ MAIN_VALVE_ENABLED : 15|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 257 MCU_INPUTS: 1 MCU
+   SG_ SPEED_SENSOR_PULSE_RAW : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ START_BUTTON : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ DEAD_MANS_SWITCH : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ EMERGENCY_SWITCH : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ RESET_BUTTON : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ CALIBRATION_BUTTON : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ LEAKAGE_DETECTED : 6|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ SHELL_RELAY : 7|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 16 MCU_FAULTS: 8 MCU
+   SG_ EMERGENCY_SWITCH : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ EMERGENCY_DEAD_MANS_SWITCH : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ EMERGENCY_LEAKAGE_DETECTED : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_FC_V_LOW : 8|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_FC_V_HIGH : 9|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_FC_C_LOW : 10|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_FC_C_HIGH : 11|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_SC_V_LOW : 16|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_SC_V_HIGH : 17|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_SC_C_LOW : 18|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_SC_C_HIGH : 19|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_MC_V_LOW : 24|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_MC_V_HIGH : 25|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_MC_C_LOW : 26|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_MC_C_HIGH : 27|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_AB_V_LOW : 32|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_AB_V_HIGH : 33|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_AB_C_LOW : 34|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ ERROR_AB_C_HIGH : 35|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 258 MCU_ANALOG_PEDALS: 4 MCU
+   SG_ ACCELERATION_PEDAL_VOLTAGE : 0|16@1+ (0.0001,0) [0|5] "V" Vector__XXX
+   SG_ BRAKE_PEDAL_VOLTAGE : 16|16@1+ (0.0001,0) [0|5] "V" Vector__XXX
+
+BO_ 259 MCU_ANALOG_FUEL_CELL: 8 MCU
+   SG_ FUEL_CELL_OUTPUT_CURRENT : 0|16@1+ (0.001,0) [0|40] "A" Vector__XXX
+   SG_ FUEL_CELL_OUTPUT_VOLTAGE : 16|16@1+ (0.001,0) [0|60] "V" Vector__XXX
+   SG_ HYDROGEN_HIGH_PRESSURE : 32|16@1+ (0.1,0) [0|700] "bar" Vector__XXX
+   SG_ HYDROGEN_LEAKAGE_SENSOR_VOLTAGE : 48|16@1+ (0.0001,0) [0|5] "V" Vector__XXX
+
+BO_ 260 MCU_ANALOG_POWERTRAIN: 8 MCU
+   SG_ SUPERCAPACITOR_VOLTAGE : 0|16@1+ (0.001,0) [0|60] "V" SWU
+   SG_ SUPERCAPACITOR_CURRENT : 16|16@1+ (0.01,0) [0|120] "A" Vector__XXX
+   SG_ MOTOR_CONTROLLER_SUPPLY_CURRENT : 32|16@1+ (0.001,0) [0|60] "A" Vector__XXX
+   SG_ MOTOR_CONTROLLER_SUPPLY_VOLTAGE : 48|16@1+ (0.001,0) [0|60] "V" Vector__XXX
+
+BO_ 261 MCU_ANALOG_ACCESSORY: 4 MCU
+   SG_ ACCESSORY_BATTERY_CURRENT : 0|16@1+ (0.001,0) [0|60] "A" Vector__XXX
+   SG_ ACCESSORY_BATTERY_VOLTAGE : 16|16@1+ (0.001,0) [0|20] "V" Vector__XXX
+
+BO_ 262 MCU_ANALOG_DRIVE: 4 MCU
+   SG_ RPM : 0|16@1+ (1,0) [0|65535] "rpm" Vector__XXX
+   SG_ SPEED : 16|16@1+ (0.01,0) [0|655] "km/h" SWU
+
+BO_ 264 MCU_ANALOG_OUTPUTS: 4 MCU
+   SG_ ACCELERATION_OUTPUT_VOLTAGE : 0|16@1+ (0.0001,0) [0|5] "V" Vector__XXX
+   SG_ BRAKE_OUTPUT_VOLTAGE : 16|16@1+ (0.0001,0) [0|5] "V" Vector__XXX
+
+BO_ 263 MCU_ANALOG_UNASSIGNED: 8 MCU
+   SG_ AI1 : 0|16@1+ (0.001,0) [0|65] "V" Vector__XXX
+   SG_ AI3 : 16|16@1+ (0.001,0) [0|65] "V" Vector__XXX
+   SG_ AI4 : 32|16@1+ (0.001,0) [0|65] "V" Vector__XXX
+   SG_ AI5 : 48|16@1+ (0.001,0) [0|65] "V" Vector__XXX
+
+BO_ 768 SWU_STATUS: 8 SWU
+   SG_ CAN_STATE : 0|8@1+ (1,0) [0|255] "" Vector__XXX
+   SG_ LAP_NUMBER : 8|8@1+ (1,0) [0|255] "" Vector__XXX
+   SG_ LAP_TIME_MS : 16|24@1+ (1,0) [0|16777215] "ms" Vector__XXX
+   SG_ TOTAL_TIME_MS : 40|24@1+ (1,0) [0|16777215] "ms" Vector__XXX
+
+BO_ 769 SWU_MCU_INPUTS: 1 SWU
+   SG_ SPEED_SENSOR_PULSE_RAW : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ START_BUTTON : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ DEAD_MANS_SWITCH : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ EMERGENCY_SWITCH : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ RESET_BUTTON : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ CALIBRATION_BUTTON : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ LEAKAGE_DETECTED : 6|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ SHELL_RELAY : 7|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 770 SWU_LCU_INPUTS: 1 SWU
+   SG_ HAZARD : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ BEAM : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ POSITION : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ RIGHT_INDICATOR : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ LEFT_INDICATOR : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ BRAKE_LIGHT : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1024 MCU_LIGHTING: 1 MCU
+   SG_ HEADLIGHT : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ POSITION_LIGHT : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ BRAKE_LIGHT : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ LEFT_INDICATOR : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ RIGHT_INDICATOR : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+   SG_ HAZARD : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1025 LCU_STATUS: 1 LCU
+   SG_ INSTANCE : 0|1@1+ (1,0) [0|1] "" MCU
+   SG_ FAULT : 1|1@1+ (1,0) [0|1] "" MCU
+   SG_ HEADLIGHT : 2|1@1+ (1,0) [0|1] "" MCU
+   SG_ POSITION_LIGHT : 3|1@1+ (1,0) [0|1] "" MCU
+   SG_ BRAKE_LIGHT : 4|1@1+ (1,0) [0|1] "" MCU
+   SG_ LEFT_INDICATOR : 5|1@1+ (1,0) [0|1] "" MCU
+   SG_ RIGHT_INDICATOR : 6|1@1+ (1,0) [0|1] "" MCU
+   SG_ HAZARD : 7|1@1+ (1,0) [0|1] "" MCU
+
+BO_ 512 FCCU_STATE: 2 FCCU
+ SG_ STATE : 0|4@1+ (1,0) [0|15] "" Vector__XXX
+ SG_ FC_TYPE : 4|3@1+ (1,0) [0|7] "" Vector__XXX
+ SG_ MAIN_VALVE : 7|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ PURGE_VALVE : 8|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ FAN_STATE : 9|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ SYSTEM_ENABLED : 10|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 513 FCCU_POWER: 8 FCCU
+ SG_ FC_VOLTAGE : 0|14@1- (0.01,0) [-50|50] "V" Vector__XXX
+ SG_ FC_CURRENT : 14|12@1- (0.01,0) [-20|20] "A" Vector__XXX
+ SG_ DCDC_VOLTAGE : 26|14@1- (0.01,0) [-50|50] "V" Vector__XXX
+ SG_ DCDC_CURRENT : 40|12@1- (0.01,0) [-20|20] "A" Vector__XXX
+ SG_ LOAD_CURRENT : 52|12@1- (0.01,0) [-20|20] "A" Vector__XXX
+
+BO_ 514 FCCU_ENVIRONMENT: 7 FCCU
+ SG_ AMBIENT_TEMP : 0|14@1- (0.01,0) [-20|70] "degC" Vector__XXX
+ SG_ FC_TEMP : 14|14@1- (0.01,0) [-20|70] "degC" Vector__XXX
+ SG_ AMBIENT_HUMIDITY : 28|14@1+ (0.01,0) [0|100] "%" Vector__XXX
+ SG_ FC_HUMIDITY : 42|14@1+ (0.01,0) [0|100] "%" Vector__XXX
+
+BO_ 515 FCCU_HYDROGEN: 6 FCCU
+ SG_ H2_FLOW : 0|10@1+ (0.01,0) [0|10] "Ln/min" Vector__XXX
+ SG_ H2_HP_PRESSURE : 10|15@1+ (0.01,0) [0|200] "bar" Vector__XXX
+ SG_ H2_LP_PRESSURE : 25|9@1+ (0.01,0) [0|5] "bar" Vector__XXX
+ SG_ LEAKAGE_VOLTAGE : 34|9@1+ (0.01,0) [0|5] "V" Vector__XXX
+
+BO_ 516 FCCU_PRESSURE: 5 FCCU
+ SG_ AMBIENT_PRESSURE : 0|17@1+ (0.01,0) [800|1200] "hPa" Vector__XXX
+ SG_ FC_PRESSURE : 17|17@1+ (0.01,0) [800|1200] "hPa" Vector__XXX
+
+BO_ 530 FCCU_SET_PURGE: 7 Vector__XXX
+ SG_ SET_PURGE_MODE : 0|2@1+ (1,0) [0|2] "" FCCU
+ SG_ SET_PERIODIC_S : 2|12@1+ (1,0) [0|3600] "s" FCCU
+ SG_ SET_VOLTAGE_TH : 14|14@1- (0.01,0) [-60|60] "V" FCCU
+ SG_ SET_COOLDOWN_S : 28|12@1+ (1,0) [0|3600] "s" FCCU
+ SG_ SET_DURATION_MS : 40|12@1+ (1,0) [0|3000] "ms" FCCU
+
+BO_ 531 FCCU_SET_FAN: 8 Vector__XXX
+ SG_ SET_FAN_MODE : 0|2@1+ (1,0) [0|2] "" FCCU
+ SG_ SET_PROP_TEMP : 2|14@1- (0.01,0) [-10|80] "degC" FCCU
+ SG_ SET_PID_P : 16|10@1+ (1,0) [0|1000] "" FCCU
+ SG_ SET_PID_I : 26|10@1+ (1,0) [0|1000] "" FCCU
+ SG_ SET_PID_D : 36|10@1+ (1,0) [0|1000] "" FCCU
+ SG_ SET_MANUAL_DUTY : 46|14@1+ (0.01,0) [0|100] "%" FCCU
+
+BO_ 532 FCCU_SET_CTRL: 1 Vector__XXX
+ SG_ CMD_SYSTEM_ENABLE : 0|1@1+ (1,0) [0|1] "" FCCU
+ SG_ CMD_MANUAL_PURGE : 1|1@1+ (1,0) [0|1] "" FCCU
+
+CM_ BU_ CCU "CAN converter unit — bridges RS485 master data to CAN. Manages status LED and DFU.";
+CM_ BU_ MCU "Master control unit (via CAN converter unit)";
+CM_ BU_ SWU "Steering wheel unit";
+CM_ BU_ LCU "Lighting control unit. Two identical boards (front/back) distinguished at runtime by a physical instance flag (switch or resistor).";
+CM_ BU_ FCCU "Fuel cell control unit - completely optimized telemetry and control node.";
+CM_ BU_ TCU "Telemetry control unit";
+CM_ BU_ EDU "Electric drive unit";
+
+BA_DEF_ BO_ "GenMsgBackgroundColor" STRING ;
+BA_DEF_ BO_ "GenMsgForegroundColor" STRING ;
+BA_DEF_DEF_ "GenMsgBackgroundColor" "#ffffff";
+BA_DEF_DEF_ "GenMsgForegroundColor" "#000000";
+
+VAL_ 256 STATUS 0 "INIT" 1 "IDLE" 2 "STARTING" 3 "SHUTTING_DOWN" 4 "RUNNING";
+VAL_ 256 VEHICLE_TYPE 0 "HYDROS_V1" 1 "HYDROS_V2" 2 "BOLID" 3 "HYDRA";
+VAL_ 256 VEHICLE_ALLOWED_TO_MOVE 0 "NOT_ALLOWED" 1 "ALLOWED";
+VAL_ 256 MAIN_VALVE_ENABLED 0 "FALSE" 1 "TRUE";
+VAL_ 256 MOTOR_CONTROLLER_ENABLED 0 "FALSE" 1 "TRUE";
+VAL_ 257 SPEED_SENSOR_PULSE_RAW 0 "LOW" 1 "HIGH";
+VAL_ 257 START_BUTTON 0 "RELEASED" 1 "PRESSED";
+VAL_ 257 DEAD_MANS_SWITCH 0 "OFF" 1 "ON";
+VAL_ 257 EMERGENCY_SWITCH 0 "OFF" 1 "ON";
+VAL_ 257 RESET_BUTTON 0 "RELEASED" 1 "PRESSED";
+VAL_ 257 CALIBRATION_BUTTON 0 "RELEASED" 1 "PRESSED";
+VAL_ 257 LEAKAGE_DETECTED 0 "FALSE" 1 "TRUE";
+VAL_ 257 SHELL_RELAY 0 "OFF" 1 "ON";
+VAL_ 768 CAN_STATE 0 "ERROR_ACTIVE" 1 "ERROR_WARNING" 2 "ERROR_PASSIVE" 3 "BUS_OFF" 4 "STOPPED";
+
+VAL_ 512 STATE 0 "INIT" 1 "IDLE" 2 "STARTING" 3 "RUNNING" 4 "ERROR";
+VAL_ 512 FC_TYPE 0 "PROTIUM" 1 "CUSTOM";
+VAL_ 512 MAIN_VALVE 0 "CLOSED" 1 "OPEN";
+VAL_ 512 PURGE_VALVE 0 "CLOSED" 1 "OPEN";
+VAL_ 512 FAN_STATE 0 "OFF" 1 "ON";
+VAL_ 512 SYSTEM_ENABLED 0 "DISABLED" 1 "ENABLED";
+VAL_ 530 SET_PURGE_MODE 0 "PERIODIC" 1 "VOLTAGE_THRESHOLD" 2 "MANUAL";
+VAL_ 531 SET_FAN_MODE 0 "PROPORTIONAL" 1 "PID" 2 "MANUAL";
