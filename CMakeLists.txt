@@ -11,7 +11,7 @@ target_sources(app PRIVATE
         src/main.c
         src/ui/system_status.c
         src/can/can_interface.c
-        src/can/can_definitions.c
+        src/can/hydrogreen_can_definitions.c
 )
 
 # Foldery, w których kompilator ma szukać nagłówków (.h)
