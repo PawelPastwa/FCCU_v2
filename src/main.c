@@ -1,145 +1,375 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/can.h>
-#include <zephyr/drivers/adc.h>
-#include "can_definitions.h"
+
+// [DOCELOWO: Dodanie nagłówków sprzętowych]
+// #include <zephyr/drivers/gpio.h>
+// #include <zephyr/drivers/adc.h>
+// #include <zephyr/drivers/pwm.h>
+
+#include "hydrogreen_can_definitions.h"
 #include "system_status.h"
 
 /* ======================================================================= */
-/*                       PARAMETRY KALIBRACYJNE SPRZĘTU                    */
+/*                         ZMIENNE STANÓW SYSTEMU                          */
 /* ======================================================================= */
-// Środkowa pozycja sprzętowego dzielnika napięcia (R46 6.8k, RV5 2k, R47 3.3k)
-#define VOLTAGE_DIVIDER_RATIO    (2.81f) // DO ZMIANY JEZELI JEST USTAWIONY INACZEJ NIZ NA SRODEK
+typedef enum {
+    STATE_INIT     = 0,
+    STATE_STARTING = 1,
+    STATE_RUNNING  = 2,
+    STATE_STOPPED  = 3
+} fccu_state_t;
 
-// Offset czujnika prądu wyznaczony na chybił trafił z odczytu ramek w savvyCAN przy braku obciążenia (0A)
-#define CURRENT_SENSOR_OFFSET_MV (2036.0f) //POTRZEBNE INFO
+volatile fccu_state_t current_state = STATE_INIT;
 
-// Domyślna czułość czujnika prądu (brak modelu w dokumentacji FCCU v2)
-#define CURRENT_SENSOR_SENS_MV_A (40.0f)
-/* ======================================================================= */
+// Zmienne sterujące elementami wykonawczymi
+volatile uint8_t logic_main_valve = 0;
+volatile uint8_t logic_purge_valve = 0;
+volatile uint8_t logic_fan_state = 0;
 
-volatile bool system_is_enabled = false;
+// Nastawy konfiguracyjne
+volatile uint8_t  set_fan_mode = 0;
+volatile uint16_t set_purge_interval_s = 0;
+volatile uint16_t set_p_gain = 0;
+volatile uint16_t set_i_gain = 0;
+volatile uint16_t set_d_gain = 0;
+
+// [DO PODMIANY: Symulator temperatury - do usunięcia w finalnej wersji]
+volatile uint8_t mock_temperature = 25;
+// [DOCELOWO: Zmienna przechowująca rzeczywisty odczyt z ADC]
+// volatile uint8_t real_temperature = 0;
+
+volatile uint8_t logic_fan_duty = 0;
 
 const struct device *can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
-const struct device *adc_dev = DEVICE_DT_GET(DT_NODELABEL(adc0));
 
-static const struct adc_channel_cfg adc_cfg_voltage = {
-        .gain             = ADC_GAIN_1_4,
-        .reference        = ADC_REF_INTERNAL,
-        .acquisition_time = ADC_ACQ_TIME_DEFAULT,
-        .channel_id       = 7, // GPIO 8 - FC Voltage
-        .differential     = 0
-};
+// [DOCELOWO: Pobranie struktury urządzeń z Device Tree]
+// static const struct gpio_dt_spec main_valve_pin = GPIO_DT_SPEC_GET(DT_NODELABEL(main_valve), gpios);
+// static const struct gpio_dt_spec purge_valve_pin = GPIO_DT_SPEC_GET(DT_NODELABEL(purge_valve), gpios);
+// static const struct pwm_dt_spec fan_pwm = PWM_DT_SPEC_GET(DT_NODELABEL(fan_pwm));
+// (Oraz analogicznie konfiguracja kanału ADC)
 
-static const struct adc_channel_cfg adc_cfg_current = {
-        .gain             = ADC_GAIN_1_4,
-        .reference        = ADC_REF_INTERNAL,
-        .acquisition_time = ADC_ACQ_TIME_DEFAULT,
-        .channel_id       = 0, // GPIO 1 - FC Current
-        .differential     = 0
-};
+/* ======================================================================= */
+/*                              CAN RX CALLBACKI                           */
+/* ======================================================================= */
 
-void can_rx_callback(const struct device *dev, struct can_frame *frame, void *user_data) {
-    if (frame->id == 0x214) {
-        struct hydrogreen_can_definitions_fccu_set_ctrl_t rx_data;
-        int unpack_ret = hydrogreen_can_definitions_fccu_set_ctrl_unpack(&rx_data, frame->data, frame->dlc);
-
-        if (unpack_ret == 0) {
-            system_is_enabled = rx_data.cmd_system_enable;
+void rx_system_enable_cb(const struct device *dev, struct can_frame *frame, void *user_data) {
+    struct hydrogreen_can_definitions_fccu_system_enable_t rx;
+    if (hydrogreen_can_definitions_fccu_system_enable_unpack(&rx, frame->data, frame->dlc) == 0) {
+        // opcja 2: zgodnie ze sztuka ale bedzie sprawiac problemy
+        //if (rx.cmd_system_enable == 1 && (current_state == STATE_INIT)
+        if (rx.cmd_system_enable == 1 && (current_state == STATE_INIT || current_state == STATE_STOPPED)) {
+            current_state = STATE_STARTING;
+            printk("[CAN RX] System Enable = 1 -> Przejscie do STARTING\n");
+        } else if (rx.cmd_system_enable == 0) {
+            current_state = STATE_STOPPED;
+            printk("[CAN RX] System Enable = 0 -> Przejscie do STOPPED\n");
         }
     }
 }
 
-int main(void) {
-    k_sleep(K_MSEC(3000));
-    printk("\n\n--- START SYSTEMU FCCU ---\n");
+void rx_main_valve_cb(const struct device *dev, struct can_frame *frame, void *user_data) {
+    struct hydrogreen_can_definitions_fccu_main_valve_command_t rx;
+    if (hydrogreen_can_definitions_fccu_main_valve_command_unpack(&rx, frame->data, frame->dlc) == 0) {
+        logic_main_valve = rx.cmd_main_valve;
+        printk("[CAN RX] Main Valve Command: %d\n", logic_main_valve);
 
+        // [DOCELOWO: Bezpośrednie wysterowanie pinu po komendzie CAN, jeśli system pozwala]
+        // if (current_state == STATE_RUNNING) {
+        //     gpio_pin_set_dt(&main_valve_pin, logic_main_valve);
+        // }
+    }
+}
+
+void rx_manual_purge_cb(const struct device *dev, struct can_frame *frame, void *user_data) {
+    struct hydrogreen_can_definitions_fccu_manual_purge_t rx;
+    if (hydrogreen_can_definitions_fccu_manual_purge_unpack(&rx, frame->data, frame->dlc) == 0) {
+        logic_purge_valve = rx.cmd_manual_purge;
+        printk("[CAN RX] Manual Purge Command: %d\n", logic_purge_valve);
+
+        // [DOCELOWO: Ręczne wysterowanie pinu zaworu zrzutowego]
+        // if (current_state == STATE_RUNNING) {
+        //     gpio_pin_set_dt(&purge_valve_pin, logic_purge_valve);
+        // }
+    }
+}
+
+void rx_fan_cb(const struct device *dev, struct can_frame *frame, void *user_data) {
+    struct hydrogreen_can_definitions_fccu_fan_t rx;
+    if (hydrogreen_can_definitions_fccu_fan_unpack(&rx, frame->data, frame->dlc) == 0) {
+        logic_fan_state = rx.cmd_fan_on;
+        printk("[CAN RX] Fan Command: %d\n", logic_fan_state);
+
+        // [DOCELOWO: Ręczne ustawienie PWM przy komendzie dla trybu MANUAL (set_fan_mode == 1)]
+        // if (set_fan_mode == 1 && current_state == STATE_RUNNING) {
+        //     logic_fan_duty = logic_fan_state ? 50 : 0; // Przykładowo 50% lub inna wartość domyślna
+        //     pwm_set_pulse_dt(&fan_pwm, (fan_pwm.period * logic_fan_duty) / 100);
+        // }
+    }
+}
+
+void rx_settings_cb(const struct device *dev, struct can_frame *frame, void *user_data) {
+    struct hydrogreen_can_definitions_fccu_settings_t rx;
+    if (hydrogreen_can_definitions_fccu_settings_unpack(&rx, frame->data, frame->dlc) == 0) {
+        set_fan_mode = rx.fan_mode;
+        set_purge_interval_s = rx.purge_interval_s;
+        set_p_gain = rx.p_gain;
+        set_i_gain = rx.i_gain;
+        set_d_gain = rx.d_gain;
+        printk("[CAN RX] Nowe nastawy -> FanMode: %d, Purge: %ds, PID: %d/%d/%d\n",
+               set_fan_mode, set_purge_interval_s, set_p_gain, set_i_gain, set_d_gain);
+    }
+}
+
+void add_ext_rx_filter(uint32_t ext_id, can_rx_callback_t cb) {
+    struct can_filter filter = {
+            .id = ext_id,
+            .mask = CAN_EXT_ID_MASK,
+            .flags = CAN_FILTER_IDE
+    };
+    can_add_rx_filter(can_dev, cb, NULL, &filter);
+}
+
+/* ======================================================================= */
+/*                                PĘTLA GŁÓWNA                             */
+/* ======================================================================= */
+
+int main(void) {
+    k_sleep(K_MSEC(2000));
+    printk("\n--- START SYSTEMU FCCU (Etap 1: Maszyna Stanow + LED) ---\n");
+
+    // Inicjalizacja Twojego modułu LED (dioda zacznie migać błędem, póki CAN nie ruszy)
     init_system_status();
 
+    // [DOCELOWO: Inicjalizacja peryferiów sprzętowych na starcie]
+    // gpio_pin_configure_dt(&main_valve_pin, GPIO_OUTPUT_INACTIVE);
+    // gpio_pin_configure_dt(&purge_valve_pin, GPIO_OUTPUT_INACTIVE);
+    // adc_channel_setup_dt(...);
+
     if (!device_is_ready(can_dev)) {
-        while (1) { printk("Blad: Urzadzenie CAN nie gotowe!\n"); k_sleep(K_MSEC(1000)); }
+        printk("Blad: Urzadzenie CAN nie gotowe!\n");
+        return -1;
     }
 
-    if (!device_is_ready(adc_dev)) {
-        while (1) { printk("Blad: Urzadzenie ADC nie gotowe!\n"); k_sleep(K_MSEC(1000)); }
-    }
-
-    if (adc_channel_setup(adc_dev, &adc_cfg_voltage) != 0) {
-        while (1) { printk("Blad ADC napiecia (CH7)!\n"); k_sleep(K_MSEC(1000)); }
-    }
-
-    if (adc_channel_setup(adc_dev, &adc_cfg_current) != 0) {
-        while (1) { printk("Blad ADC pradu (CH0)!\n"); k_sleep(K_MSEC(1000)); }
-    }
-
-    const struct can_filter rx_filter = {
-            .id = 0x214,
-            .mask = CAN_STD_ID_MASK
-    };
-    can_add_rx_filter(can_dev, &can_rx_callback, NULL, &rx_filter);
+    add_ext_rx_filter(HYDROGREEN_CAN_DEFINITIONS_FCCU_SYSTEM_ENABLE_FRAME_ID, &rx_system_enable_cb);
+    add_ext_rx_filter(HYDROGREEN_CAN_DEFINITIONS_FCCU_MAIN_VALVE_COMMAND_FRAME_ID, &rx_main_valve_cb);
+    add_ext_rx_filter(HYDROGREEN_CAN_DEFINITIONS_FCCU_MANUAL_PURGE_FRAME_ID, &rx_manual_purge_cb);
+    add_ext_rx_filter(HYDROGREEN_CAN_DEFINITIONS_FCCU_FAN_FRAME_ID, &rx_fan_cb);
+    add_ext_rx_filter(HYDROGREEN_CAN_DEFINITIONS_FCCU_SETTINGS_FRAME_ID, &rx_settings_cb);
 
     can_set_mode(can_dev, CAN_MODE_NORMAL);
     can_start(can_dev);
 
-    int32_t vref = adc_ref_internal(adc_dev);
-    printk("Inicjalizacja zakonczona sukcesem! Wchodze w petle glowna...\n");
+    uint32_t loop_counter = 0;
 
     while (1) {
-        if (system_is_enabled) {
-            int16_t sample_v, sample_c;
-            float physical_voltage = 0.0f;
-            float physical_current = 0.0f;
+        // --- 1. LOGIKA MASZYNY STANÓW ---
+        switch (current_state) {
+            case STATE_INIT:
+                break;
+            case STATE_STARTING:
+                // [DO PODMIANY: Obecnie przejście jest bezwarunkowe]
+                // [DOCELOWO: W tym miejscu zrobisz odczyt z czujników (napięcie stosu/butli) przed startem]
+                // if (adc_read_voltage() > MIN_VOLTAGE) {
+                current_state = STATE_RUNNING;
+                printk("[STATE] Przejscie ze STARTING do RUNNING\n");
+                // } else {
+                //     current_state = STATE_STOPPED;
+                //     printk("[ERR] Niskie napiecie, start przerwany!\n");
+                // }
+                break;
+            case STATE_RUNNING:
+                // Automatyczny zawór wydmuchowy (Purge)
+                if (set_purge_interval_s > 0) {
+                    static uint32_t purge_timer = 0;
+                    static bool is_purging = false;
 
-            // 1. ODCZYT NAPIĘCIA
-            struct adc_sequence seq_v = {
-                    .channels    = BIT(7),
-                    .buffer      = &sample_v,
-                    .buffer_size = sizeof(sample_v),
-                    .resolution  = 12,
-            };
-            if (adc_read(adc_dev, &seq_v) == 0) {
-                int32_t mv_v = sample_v;
-                adc_raw_to_millivolts(vref, ADC_GAIN_1_4, 12, &mv_v);
-                physical_voltage = ((float)mv_v / 1000.0f) * VOLTAGE_DIVIDER_RATIO;
-            }
+                    purge_timer++;
 
-            // 2. ODCZYT PRĄDU
-            struct adc_sequence seq_c = {
-                    .channels    = BIT(0),
-                    .buffer      = &sample_c,
-                    .buffer_size = sizeof(sample_c),
-                    .resolution  = 12,
-            };
-            if (adc_read(adc_dev, &seq_c) == 0) {
-                int32_t mv_c = sample_c;
-                adc_raw_to_millivolts(vref, ADC_GAIN_1_4, 12, &mv_c);
-                physical_current = ((float)mv_c - CURRENT_SENSOR_OFFSET_MV) / CURRENT_SENSOR_SENS_MV_A;
-            }
+                    // Główna pętla wykonuje się co 100ms (mnożnik x10 dla sekund)
+                    if (!is_purging && (purge_timer >= (set_purge_interval_s * 10))) {
+                        logic_purge_valve = 1;
+                        is_purging = true;
+                        purge_timer = 0;
+                        printk("[LOGIKA] Auto-Purge: Otwarcie zaworu\n");
+                        // [DOCELOWO: Wysterowanie pinu na stan WYSOKI]
+                        // gpio_pin_set_dt(&purge_valve_pin, 1);
+                    }
+                        // Czas trwania samego wydmuchu (np. 500ms = 5 cykli)
+                    else if (is_purging && (purge_timer >= 5)) {
+                        logic_purge_valve = 0;
+                        is_purging = false;
+                        purge_timer = 0;
+                        printk("[LOGIKA] Auto-Purge: Zamkniecie zaworu\n");
+                        // [DOCELOWO: Wysterowanie pinu na stan NISKI]
+                        // gpio_pin_set_dt(&purge_valve_pin, 0);
+                    }
+                }
+                //test, [DOCELOWO: Caly blok do usunięcia]
+                //===========================================
+                // --- 2. Symulacja wzrostu temperatury ---
+                static uint16_t temp_sim_timer = 0;
+                temp_sim_timer++;
+                if (temp_sim_timer >= 20) { // Co 2 sekundy (20 * 100ms)
+                    mock_temperature++;
+                    if (mock_temperature > 45) {
+                        mock_temperature = 25; // Reset po osiągnięciu 45 stopni
+                    }
+                    temp_sim_timer = 0;
+                    printk("[MOCK] Aktualna temperatura: %d C\n", mock_temperature);
+                }
+                //===========================================
+                // [DOCELOWO: zastąpić go fizycznym odczytem]
+                // adc_read(adc_dev, &sequence);
+                // real_temperature = calculate_temp_from_raw_adc(sample_buffer[0]);
+                // (W poniższych blokach case 2 i case 3 zmienić  "mock_temperature" na "real_temperature")
 
-            // 3. PAKOWANIE I WYSYŁKA
-            struct hydrogreen_can_definitions_fccu_power_t power_data;
-            power_data.fc_voltage = (int)(CLAMP(physical_voltage, -50.0f, 50.0f) * 100.0f);
-            power_data.fc_current = (int)(CLAMP(physical_current, -20.0f, 20.0f) * 100.0f);
-            power_data.dcdc_voltage = 0;
-            power_data.dcdc_current = 0;
-            power_data.load_current = 0;
+                // Algorytm sterowania wentylatorem
+                switch (set_fan_mode) {
+                    case 0: // OFF
+                        logic_fan_state = 0;
+                        logic_fan_duty = 0;
+                        break;
+                    case 1: // MANUAL
+                        // Stan zmieniany bezpośrednio ramką 0x513 (Manual Fan Command)
+                        // Obsługiwane wyżej w rx_fan_cb
+                        break;
+                    case 2: // LINEAR_TEMP (Termostat)
+                        // Miejsce na przyszłą logikę odczytu temperatury z przetwornika ADC
 
-            uint8_t payload[8];
-            hydrogreen_can_definitions_fccu_power_pack(payload, &power_data, 8);
+                        //test
+                        //===================================
+                        if (mock_temperature >= 35) {
+                            if (logic_fan_state == 0) printk("[LOGIKA] Fan ON (Temp >= 35C)\n");
+                            logic_fan_state = 1;
+                        } else if (mock_temperature <= 30) {
+                            if (logic_fan_state == 1) printk("[LOGIKA] Fan OFF (Temp <= 30C)\n");
+                            logic_fan_state = 0;
+                        }
+                        //===================================
+                        break;
+                    case 3: // PID
+                        // Miejsce na dyskretną pętlę PID korzystającą z set_p_gain, set_i_gain, set_d_gain
+                        // Obliczenia uchybu między wartością zadaną a odczytem temperatury
 
-            struct can_frame frame = {
-                    .id = 0x201,
-                    .dlc = 8,
-            };
-            memcpy(frame.data, payload, 8);
+                        //test
+                        //=================================================
+                    {
+                        static int32_t integral = 0;
+                        static int32_t previous_error = 0;
+                        int32_t setpoint = 30; // Utrzymujemy 30 stopni
 
-            if (can_send(can_dev, &frame, K_MSEC(100), NULL, NULL) != 0) {
-                set_system_status(STATUS_CAN_ERROR);
-            } else {
-                set_system_status(STATUS_CAN_OK);
-            }
+                        int32_t error = mock_temperature - setpoint;
+
+                        // Zbieramy uchyb
+                        integral += error;
+
+                        // Obliczamy poszczególne człony
+                        int32_t p_term = set_p_gain * error;
+                        int32_t i_term = set_i_gain * integral;
+                        int32_t d_term = set_d_gain * (error - previous_error);
+
+                        previous_error = error;
+                        int32_t output = p_term + i_term + d_term;
+
+                        // Skuteczny Anti-Windup dla urządzenia chłodzącego
+                        if (output >= 100) {
+                            output = 100;
+                            // Jeśli wysterowanie osiągnęło 100%, zabraniamy dalszego rośnięcia całki
+                            if (error > 0) {
+                                integral -= error;
+                            }
+                        } else if (error <= 0 || output <= 0) {
+                            // Jeśli temperatura spadła do zadanej (lub niżej),
+                            // odcinamy wiatrak i CZYŚCIMY pamięć całki
+                            output = 0;
+                            integral = 0;
+                        }
+
+                        logic_fan_duty = (uint8_t)output;
+                        logic_fan_state = (logic_fan_duty > 0) ? 1 : 0;
+                        break;
+                    }
+                        //=================================================
+                        // [DOCELOWO: Wysłanie obliczonego wypełnienia PWM na pin]
+                        // Jeśli jesteśmy w trybie Auto (2 lub 3), aktualizujemy sygnał sprzętowy:
+                        // if (set_fan_mode == 2 || set_fan_mode == 3) {
+                        //     pwm_set_pulse_dt(&fan_pwm, (fan_pwm.period * logic_fan_duty) / 100);
+                        // }
+                }
+                break;
+            case STATE_STOPPED:
+                logic_main_valve = 0;
+                logic_purge_valve = 0;
+                logic_fan_state = 0;
+
+                // [DOCELOWO: Awaryjne wyłączenie wszystkich pinów sprzętowych]
+                // gpio_pin_set_dt(&main_valve_pin, 0);
+                // gpio_pin_set_dt(&purge_valve_pin, 0);
+                // pwm_set_pulse_dt(&fan_pwm, 0);
+                break;
         }
-        k_sleep(K_MSEC(1000));
+
+        // --- 2. NADAWANIE RAMEK CAN (TX) ---
+        struct hydrogreen_can_definitions_fccu_state_t tx_state = {
+                .state = current_state,
+                .main_valve = logic_main_valve,
+                .purge_valve = logic_purge_valve,
+                .fan_state = logic_fan_state,
+                .fan_duty = logic_fan_duty
+        };
+
+        uint8_t payload_state[8] = {0};
+        int len_state = hydrogreen_can_definitions_fccu_state_pack(payload_state, &tx_state, 8);
+
+        struct can_frame frame_state = {
+                .id = HYDROGREEN_CAN_DEFINITIONS_FCCU_STATE_FRAME_ID,
+                .flags = CAN_FRAME_IDE,
+                .dlc = len_state
+        };
+        memcpy(frame_state.data, payload_state, len_state);
+
+        int ret = can_send(can_dev, &frame_state, K_MSEC(10), NULL, NULL);
+        if (ret != 0) {
+            // Jeżeli ramka nie przeszła na szynę - zgłoś błąd komunikacji (Dioda LED ERROR)
+            set_system_status(STATUS_CAN_ERROR);
+
+            enum can_state bus_state;
+            struct can_bus_err_cnt err_cnt;
+            can_get_state(can_dev, &bus_state, &err_cnt);
+
+            if (bus_state == CAN_STATE_BUS_OFF) {
+                printk("[CAN ERR] BUS-OFF! Oczekiwanie na automatyczny reset magistrali przez Zephyr...\n");
+            }
+        } else {
+            // Jeżeli wysyłanie przeszło pomyślnie - ustaw status LED OK
+            set_system_status(STATUS_CAN_OK);
+        }
+
+        if (loop_counter % 50 == 0) {
+            struct hydrogreen_can_definitions_fccu_version_t tx_version = {
+                    .firmware_major = 1,
+                    .firmware_minor = 0,
+                    .firmware_patch = 0,
+                    .build_id = 123456,
+                    .vehicle_type = 2,
+                    .fuelcell_type = 1
+            };
+
+            uint8_t payload_ver[8] = {0};
+            int len_ver = hydrogreen_can_definitions_fccu_version_pack(payload_ver, &tx_version, 8);
+
+            struct can_frame frame_version = {
+                    .id = HYDROGREEN_CAN_DEFINITIONS_FCCU_VERSION_FRAME_ID,
+                    .flags = CAN_FRAME_IDE,
+                    .dlc = len_ver
+            };
+            memcpy(frame_version.data, payload_ver, len_ver);
+            can_send(can_dev, &frame_version, K_NO_WAIT, NULL, NULL);
+        }
+
+        loop_counter++;
+        k_sleep(K_MSEC(100));
     }
     return 0;
 }

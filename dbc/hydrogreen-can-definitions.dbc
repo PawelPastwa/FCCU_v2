@@ -202,7 +202,7 @@ BO_ 2147484929 FCCU_VERSION: 8 FCCU
    SG_ FIRMWARE_MAJOR : 0|8@1+ (1,0) [0|255] "" Vector__XXX
    SG_ FIRMWARE_MINOR : 8|8@1+ (1,0) [0|255] "" Vector__XXX
    SG_ FIRMWARE_PATCH : 16|8@1+ (1,0) [0|255] "" Vector__XXX
-   SG_ BUILD_ID : 24|24@1+ (1,0) [0|16777215] "" Vector__XXX
+   SG_ BUILD_ID : 24|24@1+ (1,0) [0|1.67772e+07] "" Vector__XXX
    SG_ VEHICLE_TYPE : 48|8@1+ (1,0) [0|255] "" Vector__XXX
    SG_ FUELCELL_TYPE : 56|8@1+ (1,0) [0|255] "" Vector__XXX
 
@@ -305,21 +305,23 @@ CM_ SG_ 2147484672 HAZARD "Hazard lights - overrides indicators, both sides blin
 CM_ BO_ 2147484673 "LCU status. Both front and back instances transmit this frame. Signal layout mirrors MCU_LIGHTING for direct comparison. INSTANCE identifies which board sent it.";
 CM_ SG_ 2147484673 INSTANCE "Physical instance flag set by onboard switch/resistor. 0=FRONT, 1=BACK.";
 CM_ SG_ 2147484673 FAULT "LED strip or communication fault detected.";
-CM_ BO_ 2147484928 "0x500 - FCCU operating state, main valve, purge valve, fan state and duty.";
-CM_ BO_ 2147484929 "0x501 - FCCU firmware version and types.";
-CM_ BO_ 2147484930 "0x502 - Hydrogen flow, pressures, and leakage.";
-CM_ BO_ 2147484931 "0x503 - Fuel cell voltage, current, and DCDC (accessory) voltage/current.";
-CM_ BO_ 2147484932 "0x504 - Fuel cell and ambient environmental readings.";
-CM_ BO_ 2147484933 "0x505 - Load current and HO-10P current sensor channels.";
-CM_ BO_ 2147484944 "0x510 - Command to enable or disable the FCCU system.";
-CM_ BO_ 2147484945 "0x511 - Command to open or close the main valve.";
-CM_ BO_ 2147484946 "0x512 - Command to manually trigger the purge valve.";
-CM_ BO_ 2147484947 "0x513 - Command to turn the fan on or off.";
-CM_ BO_ 2147484960 "0x520 - FCCU settings for Fan mode, Purge interval, and PID gains.";
+CM_ BO_ 2147484928 "FCCU operating state, main valve, purge valve, fan state and duty.";
+CM_ BO_ 2147484929 "FCCU firmware version and types.";
+CM_ BO_ 2147484930 "Hydrogen flow, pressures, and leakage.";
+CM_ BO_ 2147484931 "Fuel cell voltage, current, and DCDC (accessory) voltage/current.";
+CM_ BO_ 2147484932 "Fuel cell and ambient environmental readings.";
+CM_ BO_ 2147484933 "Load current and HO-10P current sensor channels.";
+CM_ BO_ 2147484944 "Command to enable or disable the FCCU system.";
+CM_ BO_ 2147484945 "Command to open or close the main valve.";
+CM_ BO_ 2147484946 "Command to manually trigger the purge valve.";
+CM_ BO_ 2147484947 "Command to turn the fan on or off.";
+CM_ BO_ 2147484960 "FCCU settings for Fan mode, Purge interval, and PID gains.";
 BA_DEF_ BO_ "GenMsgBackgroundColor" STRING ;
 BA_DEF_ BO_ "GenMsgForegroundColor" STRING ;
+BA_DEF_ BO_ "labelfilters" INT 0 0;
 BA_DEF_DEF_ "GenMsgBackgroundColor" "#ffffff";
 BA_DEF_DEF_ "GenMsgForegroundColor" "#000000";
+BA_DEF_DEF_ "labelfilters" 1;
 VAL_ 2147483919 STATUS 0 "INIT" 1 "OPERATIONAL" 2 "WARNING" 3 "BUS_OFF" 4 "DFU";
 VAL_ 2147483904 STATUS 0 "INIT" 1 "IDLE" 2 "STARTING" 3 "SHUTTING_DOWN" 4 "RUNNING";
 VAL_ 2147483904 VEHICLE_TYPE 0 "HYDROS_V1" 1 "HYDROS_V2" 2 "BOLID" 3 "HYDRA";

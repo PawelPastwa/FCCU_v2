@@ -3,7 +3,7 @@
 #include <zephyr/logging/log.h>
 
 #include "system_status.h"
-#include "can_definitions.h"
+#include "hydrogreen_can_definitions.h"
 
 LOG_MODULE_REGISTER(can_interface, LOG_LEVEL_INF);
 
