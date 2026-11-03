@@ -39,6 +39,11 @@ volatile uint8_t mock_temperature = 25;
 // [DOCELOWO: Zmienna przechowująca rzeczywisty odczyt z ADC]
 // volatile uint8_t real_temperature = 0;
 
+// [DO PODMIANY: Symulator parametrów - do usunięcia w finalnej wersji]
+volatile int16_t mock_fc_voltage = 4500; // Symulacja 45.00 V
+volatile int16_t mock_fc_current = 1500; // Symulacja 15.00 A
+// [DOCELOWO: Zmienne przechowujące przetworzone wartości z ADC
+
 volatile uint8_t logic_fan_duty = 0;
 
 const struct device *can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
@@ -100,6 +105,10 @@ void rx_fan_cb(const struct device *dev, struct can_frame *frame, void *user_dat
         logic_fan_state = rx.cmd_fan_on;
         printk("[CAN RX] Fan Command: %d\n", logic_fan_state);
 
+        if (set_fan_mode == 0) {
+            // Jeśli włączono (1), ustaw 100%. Jeśli wyłączono (0), ustaw 0%.
+            logic_fan_duty = logic_fan_state ? 100 : 0;
+        }
         // [DOCELOWO: Ręczne ustawienie PWM przy komendzie dla trybu MANUAL (set_fan_mode == 1)]
         // if (set_fan_mode == 1 && current_state == STATE_RUNNING) {
         //     logic_fan_duty = logic_fan_state ? 50 : 0; // Przykładowo 50% lub inna wartość domyślna
@@ -224,17 +233,22 @@ int main(void) {
                 // real_temperature = calculate_temp_from_raw_adc(sample_buffer[0]);
                 // (W poniższych blokach case 2 i case 3 zmienić  "mock_temperature" na "real_temperature")
 
+                // --- Symulacja dynamicznej telemetrii ---
+                // [DO PODMIANY: Usuń ten blok, docelowo tu wpadną przeliczenia z prawdziwego sprzętu]
+                if (temp_sim_timer == 19) { // Aktualizacja chwilę przed skokiem temperatury
+                    mock_fc_voltage -= 10;  // Spadek napięcia o 0.10 V
+                    mock_fc_current += 20;  // Wzrost prądu o 0.20 A
+                    if (mock_fc_voltage < 3500) mock_fc_voltage = 4500;
+                    if (mock_fc_current > 3000) mock_fc_current = 1500;
+                }
+
                 // Algorytm sterowania wentylatorem
                 switch (set_fan_mode) {
-                    case 0: // OFF
-                        logic_fan_state = 0;
-                        logic_fan_duty = 0;
-                        break;
-                    case 1: // MANUAL
+                    case 0: // MANUAL
                         // Stan zmieniany bezpośrednio ramką 0x513 (Manual Fan Command)
                         // Obsługiwane wyżej w rx_fan_cb
                         break;
-                    case 2: // LINEAR_TEMP (Termostat)
+                    case 1: // LINEAR_TEMP (Termostat)
                         // Miejsce na przyszłą logikę odczytu temperatury z przetwornika ADC
 
                         //test
@@ -242,13 +256,15 @@ int main(void) {
                         if (mock_temperature >= 35) {
                             if (logic_fan_state == 0) printk("[LOGIKA] Fan ON (Temp >= 35C)\n");
                             logic_fan_state = 1;
+                            logic_fan_duty = 100;
                         } else if (mock_temperature <= 30) {
                             if (logic_fan_state == 1) printk("[LOGIKA] Fan OFF (Temp <= 30C)\n");
                             logic_fan_state = 0;
+                            logic_fan_duty = 0;
                         }
                         //===================================
                         break;
-                    case 3: // PID
+                    case 2: // PID
                         // Miejsce na dyskretną pętlę PID korzystającą z set_p_gain, set_i_gain, set_d_gain
                         // Obliczenia uchybu między wartością zadaną a odczytem temperatury
 
@@ -344,6 +360,42 @@ int main(void) {
         } else {
             // Jeżeli wysyłanie przeszło pomyślnie - ustaw status LED OK
             set_system_status(STATUS_CAN_OK);
+
+            // --- 3. NADAWANIE TELEMETRII ---
+
+            // Ramka 0x504: Środowisko (FCCU_ENVIRONMENT)
+            struct hydrogreen_can_definitions_fccu_environment_t tx_env = {
+                    .fc_temp_c = mock_temperature * 100, // Zastosowanie skali 0.01 z DBC
+                    .ambient_temp_c = 2200,              // Stałe 22.00 C
+                    .ambient_humidity = 4500,            // Stałe 45.00 %
+                    .ambient_pressure = 101300           // Stałe 1013.00 hPa
+            };
+            uint8_t payload_env[8] = {0};
+            int len_env = hydrogreen_can_definitions_fccu_environment_pack(payload_env, &tx_env, 8);
+            struct can_frame frame_env = {
+                    .id = HYDROGREEN_CAN_DEFINITIONS_FCCU_ENVIRONMENT_FRAME_ID,
+                    .flags = CAN_FRAME_IDE,
+                    .dlc = len_env
+            };
+            memcpy(frame_env.data, payload_env, len_env);
+            can_send(can_dev, &frame_env, K_NO_WAIT, NULL, NULL);
+
+            // Ramka 0x503: Zasilanie (FCCU_POWER)
+            struct hydrogreen_can_definitions_fccu_power_t tx_power = {
+                    .fc_voltage = mock_fc_voltage,
+                    .fc_current = mock_fc_current,
+                    .dcdc_voltage = 1200,                // Stałe 12.00 V
+                    .dcdc_current = 500                  // Stałe 5.00 A
+            };
+            uint8_t payload_power[8] = {0};
+            int len_power = hydrogreen_can_definitions_fccu_power_pack(payload_power, &tx_power, 8);
+            struct can_frame frame_power = {
+                    .id = HYDROGREEN_CAN_DEFINITIONS_FCCU_POWER_FRAME_ID,
+                    .flags = CAN_FRAME_IDE,
+                    .dlc = len_power
+            };
+            memcpy(frame_power.data, payload_power, len_power);
+            can_send(can_dev, &frame_power, K_NO_WAIT, NULL, NULL);
         }
 
         if (loop_counter % 50 == 0) {
