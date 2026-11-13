@@ -21,7 +21,7 @@ const struct device *can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
 // Pobranie pinów GPIO, fan pwm i adc z aliasów zdefiniowanych w pliku .dts
 static const struct gpio_dt_spec main_valve_pin = GPIO_DT_SPEC_GET(DT_NODELABEL(main_valve0), gpios);
 static const struct gpio_dt_spec purge_valve_pin = GPIO_DT_SPEC_GET(DT_NODELABEL(purge_valve0), gpios);
-static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), button_external_gpios);
+static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), button_onboard_gpios);
 static const struct gpio_dt_spec flow_sensor_pin = GPIO_DT_SPEC_GET(DT_NODELABEL(flow_meter_0), gpios);
 static const struct adc_dt_spec hp_sensor = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 5);
 static const struct adc_dt_spec fc_voltage_sensor = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 2);
@@ -134,13 +134,14 @@ void click_timer_handler(struct k_timer *dummy) {
 }
 
 void button_pressed_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
+    printk("[ISR] Zlapano zbocze na pinie przycisku!\n");
     static uint32_t last_time = 0;
     uint32_t now = k_uptime_get_32();
 
     if (now - last_time > 50) {
         click_count++;
         last_time = now;
-        k_timer_start(&click_timer, K_MSEC(350), K_NO_WAIT);
+        k_timer_start(&click_timer, K_MSEC(300), K_NO_WAIT);
     }
 }
 
@@ -289,7 +290,7 @@ int main(void) {
     k_work_init(&click_work, click_work_handler);
 
     if (gpio_is_ready_dt(&button)) {
-        gpio_pin_configure_dt(&button, GPIO_INPUT);
+        gpio_pin_configure_dt(&button, GPIO_INPUT | GPIO_PULL_UP);
         gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
         gpio_init_callback(&button_cb_data, button_pressed_isr, BIT(button.pin));
         gpio_add_callback(button.port, &button_cb_data);
