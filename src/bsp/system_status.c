@@ -14,6 +14,10 @@ static volatile can_status current_status = STATUS_CAN_ERROR;
 
 // DEDYKOWANY WĄTEK DIODY (Thread)
 void led_thread_function(void) {
+    if (!device_is_ready(led.port)) {
+        return;
+    }
+    gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
     while (1) {
         // Kopiujemy status, żeby nie zmienił się w ułamku sekundy podczas mrugania
         can_status active_status = current_status;
