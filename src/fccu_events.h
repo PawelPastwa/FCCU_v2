@@ -26,6 +26,10 @@ typedef struct {
     union {
         uint8_t u8_val;
         struct {
+            uint8_t on;
+            uint8_t duty;
+        } fan_cmd;
+        struct {
             uint8_t  mode;
             uint16_t p_gain;
             uint16_t i_gain;

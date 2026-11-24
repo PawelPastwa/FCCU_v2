@@ -230,6 +230,9 @@ BO_ 2147484933 FCCU_CURRENTS: 8 FCCU
    SG_ HO_CURRENT_2 : 32|16@1- (0.01,0) [-40|40] "A" Vector__XXX
    SG_ HO_CURRENT_3 : 48|16@1- (0.01,0) [-40|40] "A" Vector__XXX
 
+BO_ 2147484934 FCCU_HYDROGEN_TOTAL: 4 FCCU
+   SG_ H2_TOTAL_VOLUME : 0|32@1+ (0.01,0) [0|42949672.95] "Ln" Vector__XXX
+
 BO_ 2147484944 FCCU_SYSTEM_ENABLE: 1 Vector__XXX
    SG_ CMD_SYSTEM_ENABLE : 0|1@1+ (1,0) [0|1] "" FCCU
 
@@ -239,8 +242,9 @@ BO_ 2147484945 FCCU_MAIN_VALVE_COMMAND: 1 Vector__XXX
 BO_ 2147484946 FCCU_MANUAL_PURGE: 1 Vector__XXX
    SG_ CMD_MANUAL_PURGE : 0|1@1+ (1,0) [0|1] "" FCCU
 
-BO_ 2147484947 FCCU_FAN: 1 Vector__XXX
+BO_ 2147484947 FCCU_FAN: 2 Vector__XXX
    SG_ CMD_FAN_ON : 0|1@1+ (1,0) [0|1] "" FCCU
+   SG_ CMD_FAN_DUTY : 8|8@1+ (1,0) [0|100] "%" FCCU
 
 BO_ 2147484960 FCCU_FAN_SETTINGS: 8 Vector__XXX
    SG_ FAN_MODE : 0|2@1+ (1,0) [0|3] "" FCCU
@@ -314,6 +318,8 @@ CM_ BO_ 2147484930 "Hydrogen flow, pressures, and leakage.";
 CM_ BO_ 2147484931 "Fuel cell voltage, current, and DCDC (accessory) voltage/current.";
 CM_ BO_ 2147484932 "Fuel cell and ambient environmental readings.";
 CM_ BO_ 2147484933 "Load current and HO-10P current sensor channels.";
+CM_ BO_ 2147484934 "Total hydrogen volume consumed since power-on.";
+CM_ SG_ 2147484934 H2_TOTAL_VOLUME "Cumulative hydrogen consumption since power-on, resets to 0 on reboot.";
 CM_ BO_ 2147484944 "Command to enable or disable the FCCU system.";
 CM_ BO_ 2147484945 "Command to open or close the main valve.";
 CM_ BO_ 2147484946 "Command to manually trigger the purge valve.";

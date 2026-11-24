@@ -27,5 +27,5 @@ typedef struct {
 
 int  fccu_can_init(void);
 void fccu_can_send_telemetry(const fccu_telemetry_t *tel);
-
+void fccu_can_send_state(uint8_t state, uint8_t main_valve, uint8_t purge_valve, uint8_t fan_state, uint8_t fan_duty);
 #endif //INZYNIERKA_FCCU_CAN_H

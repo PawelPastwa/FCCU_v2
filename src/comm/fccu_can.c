@@ -5,12 +5,23 @@
 #include "system_status.h"
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/drivers/can.h>
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(fccu_can, LOG_LEVEL_INF);
 
 static const struct device *const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
+static atomic_t can_tx_acked = ATOMIC_INIT(0);
+
+static void can_tx_cb(const struct device *dev, int error, void *user_data) {
+    ARG_UNUSED(dev);
+    ARG_UNUSED(user_data);
+
+    if (error == 0) {
+        atomic_set(&can_tx_acked, 1);
+    }
+}
 
 static void can_rx_callback(const struct device *dev, struct can_frame *frame, void *user_data) {
     ARG_UNUSED(dev);
@@ -55,8 +66,15 @@ static void can_rx_callback(const struct device *dev, struct can_frame *frame, v
             struct hydrogreen_can_definitions_fccu_fan_t msg;
             if (hydrogreen_can_definitions_fccu_fan_unpack(&msg, frame->data, frame->dlc) == 0) {
                 evt.type = FCCU_EVT_CAN_FAN_CMD;
-                evt.data.u8_val = msg.cmd_fan_on;
-                (void)fccu_event_post(&evt);
+                evt.data.fan_cmd.on = msg.cmd_fan_on;
+                evt.data.fan_cmd.duty = msg.cmd_fan_duty;
+                (void) fccu_event_post(&evt);
+            } else if (frame->dlc == 1U) {
+                /* Kompatybilność wsteczna ze starą 1-bajtową ramką 0x513 */
+                evt.type = FCCU_EVT_CAN_FAN_CMD;
+                evt.data.fan_cmd.on = (uint8_t) (frame->data[0] & 0x01U);
+                evt.data.fan_cmd.duty = (evt.data.fan_cmd.on != 0U) ? FCCU_FAN_DUTY_MAX_PCT : FCCU_FAN_DUTY_MIN_PCT;
+                (void) fccu_event_post(&evt);
             }
             break;
         }
@@ -124,12 +142,41 @@ int fccu_can_init(void) {
         LOG_ERR("Failed to start CAN: %d", ret);
         return ret;
     }
-    set_system_status(STATUS_CAN_OK);
+
     return 0;
 }
 
+void fccu_can_send_state(uint8_t state, uint8_t main_valve, uint8_t purge_valve, uint8_t fan_state, uint8_t fan_duty) {
+    if (!device_is_ready(can_dev)) {
+        return;
+    }
+
+    struct hydrogreen_can_definitions_fccu_state_t state_msg = {
+            .state       = state,
+            .main_valve  = main_valve,
+            .purge_valve = purge_valve,
+            .fan_state   = fan_state,
+            .fan_duty    = fan_duty
+    };
+
+    struct can_frame state_frame = {
+            .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_STATE_FRAME_ID,
+            .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_STATE_LENGTH,
+            .flags = CAN_FRAME_IDE
+    };
+
+    if (hydrogreen_can_definitions_fccu_state_pack(state_frame.data, &state_msg, sizeof(state_frame.data)) > 0) {
+        (void)can_send(can_dev, &state_frame, K_MSEC(10), can_tx_cb, NULL);
+    }
+}
+
 void fccu_can_send_telemetry(const fccu_telemetry_t *tel) {
-    if (tel == NULL || !device_is_ready(can_dev)) {
+    if (tel == NULL) {
+        return;
+    }
+
+    if (!device_is_ready(can_dev)) {
+        set_system_status(STATUS_CAN_ERROR);
         return;
     }
 
@@ -141,12 +188,15 @@ void fccu_can_send_telemetry(const fccu_telemetry_t *tel) {
             set_system_status(STATUS_CAN_ERROR);
             (void)can_recover(can_dev, K_MSEC(100));
             return;
-        } else if (state == CAN_STATE_STOPPED || state == CAN_STATE_ERROR_PASSIVE) {
+        }
+        if (state == CAN_STATE_STOPPED) {
             set_system_status(STATUS_CAN_ERROR);
-        } else {
-            set_system_status(STATUS_CAN_OK);
+            return;
         }
     }
+
+    int prev_acked = (int)atomic_set(&can_tx_acked, 0);
+    int tx_err = -EIO;
 
     /* 1. Ramka FCCU_STATE (0x500, 2 bajty) */
     struct hydrogreen_can_definitions_fccu_state_t state_msg = {
@@ -164,7 +214,7 @@ void fccu_can_send_telemetry(const fccu_telemetry_t *tel) {
     };
 
     if (hydrogreen_can_definitions_fccu_state_pack(state_frame.data, &state_msg, sizeof(state_frame.data)) > 0) {
-        (void)can_send(can_dev, &state_frame, K_MSEC(10), NULL, NULL);
+        tx_err = can_send(can_dev, &state_frame, K_MSEC(10), can_tx_cb, NULL);
     }
 
     /* 2. Ramka FCCU_HYDROGEN (0x502, 8 bajtów) */
@@ -182,44 +232,81 @@ void fccu_can_send_telemetry(const fccu_telemetry_t *tel) {
     };
 
     if (hydrogreen_can_definitions_fccu_hydrogen_pack(h2_frame.data, &h2_msg, sizeof(h2_frame.data)) > 0) {
-        (void)can_send(can_dev, &h2_frame, K_MSEC(10), NULL, NULL);
+        int ret = can_send(can_dev, &h2_frame, K_MSEC(10), can_tx_cb, NULL);
+        if (ret != 0) {
+            tx_err = ret;
+        }
+    }
+
+    /* 3. Ramka FCCU_HYDROGEN_TOTAL (0x506, 4 bajty — narastające zużycie od włączenia zasilania) */
+    struct hydrogreen_can_definitions_fccu_hydrogen_total_t h2_total_msg = {
+            .h2_total_volume = (tel->total_volume_ln > 0)
+                               ? hydrogreen_can_definitions_fccu_hydrogen_total_h2_total_volume_encode((double)tel->total_volume_ln)
+                               : 0U
+    };
+
+    struct can_frame h2_total_frame = {
+            .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_HYDROGEN_TOTAL_FRAME_ID,
+            .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_HYDROGEN_TOTAL_LENGTH,
+            .flags = CAN_FRAME_IDE
+    };
+
+    if (hydrogreen_can_definitions_fccu_hydrogen_total_pack(h2_total_frame.data, &h2_total_msg, sizeof(h2_total_frame.data)) > 0) {
+        int ret = can_send(can_dev, &h2_total_frame, K_MSEC(10), can_tx_cb, NULL);
+        if (ret != 0) {
+            tx_err = ret;
+        }
     }
 
 #if FCCU_USE_EXTRA_SENSORS
-    /* 3. Ramka FCCU_POWER (0x503, 8 bajtów) */
+    /* 4. Ramka FCCU_POWER (0x503, 8 bajtów) */
     struct hydrogreen_can_definitions_fccu_power_t pwr_msg = {
-        .fc_voltage   = tel->fc_voltage_x100,
-        .fc_current   = tel->fc_current_x100,
-        .dcdc_voltage = 0,
-        .dcdc_current = 0
+            .fc_voltage   = tel->fc_voltage_x100,
+            .fc_current   = tel->fc_current_x100,
+            .dcdc_voltage = 0,
+            .dcdc_current = 0
     };
 
     struct can_frame pwr_frame = {
-        .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_POWER_FRAME_ID,
-        .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_POWER_LENGTH,
-        .flags = CAN_FRAME_IDE
+            .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_POWER_FRAME_ID,
+            .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_POWER_LENGTH,
+            .flags = CAN_FRAME_IDE
     };
 
     if (hydrogreen_can_definitions_fccu_power_pack(pwr_frame.data, &pwr_msg, sizeof(pwr_frame.data)) > 0) {
-        (void)can_send(can_dev, &pwr_frame, K_MSEC(10), NULL, NULL);
+        int ret = can_send(can_dev, &pwr_frame, K_MSEC(10), can_tx_cb, NULL);
+        if (ret != 0) {
+            tx_err = ret;
+        }
     }
+#endif
 
-    /* 4. Ramka FCCU_ENVIRONMENT (0x504, 8 bajtów) */
+#if FCCU_USE_BME280
+    /* 5. Ramka FCCU_ENVIRONMENT (0x504, 8 bajtów) */
     struct hydrogreen_can_definitions_fccu_environment_t env_msg = {
-        .fc_temp_c        = tel->ambient_temp_x100,
-        .ambient_temp_c   = tel->ambient_temp_x100,
-        .ambient_humidity = tel->ambient_humidity_x100,
-        .ambient_pressure = tel->ambient_pressure_x100
+            .fc_temp_c        = tel->ambient_temp_x100,
+            .ambient_temp_c   = tel->ambient_temp_x100,
+            .ambient_humidity = tel->ambient_humidity_x100,
+            .ambient_pressure = tel->ambient_pressure_x100
     };
 
     struct can_frame env_frame = {
-        .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_ENVIRONMENT_FRAME_ID,
-        .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_ENVIRONMENT_LENGTH,
-        .flags = CAN_FRAME_IDE
+            .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_ENVIRONMENT_FRAME_ID,
+            .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_ENVIRONMENT_LENGTH,
+            .flags = CAN_FRAME_IDE
     };
 
     if (hydrogreen_can_definitions_fccu_environment_pack(env_frame.data, &env_msg, sizeof(env_frame.data)) > 0) {
-        (void)can_send(can_dev, &env_frame, K_MSEC(10), NULL, NULL);
+        int ret = can_send(can_dev, &env_frame, K_MSEC(10), can_tx_cb, NULL);
+        if (ret != 0) {
+            tx_err = ret;
+        }
     }
 #endif
+
+    if (tx_err == 0 && prev_acked == 1) {
+        set_system_status(STATUS_CAN_OK);
+    } else {
+        set_system_status(STATUS_CAN_ERROR);
+    }
 }

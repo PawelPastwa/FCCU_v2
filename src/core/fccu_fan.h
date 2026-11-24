@@ -29,6 +29,7 @@ void    fccu_fan_init(fccu_fan_ctx_t *ctx);
 void    fccu_fan_stop(fccu_fan_ctx_t *ctx);
 void    fccu_fan_set_settings(fccu_fan_ctx_t *ctx, uint8_t mode, uint16_t p, uint16_t i, uint16_t d);
 void    fccu_fan_set_manual(fccu_fan_ctx_t *ctx, uint8_t fan_on);
+void    fccu_fan_set_manual_duty(fccu_fan_ctx_t *ctx, uint8_t fan_on, uint8_t duty_percent);
 uint8_t fccu_fan_clamp_duty(uint8_t duty_percent);
 void    fccu_fan_step(fccu_fan_ctx_t *ctx, bool is_running, uint8_t current_temp_c);
 

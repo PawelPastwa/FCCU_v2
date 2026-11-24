@@ -3,35 +3,54 @@
 #include "fccu_events.h"
 
 #include <zephyr/kernel.h>
-#include <zephyr/sys/atomic.h>
 #include <zephyr/drivers/gpio.h>
 
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), button_onboard_gpios);
 static struct gpio_callback button_cb_data;
-static struct k_timer click_timer;
-static struct k_work click_work;
-static atomic_t click_count = ATOMIC_INIT(0);
 
-static void click_work_handler(struct k_work *work) {
+static struct k_work_delayable debounce_work;
+static struct k_work_delayable click_timeout_work;
+
+/* Dostęp wyłącznie z wątku system workqueue (brak wyścigu między handlerami) */
+static uint8_t click_count = 0U;
+
+static void click_timeout_work_handler(struct k_work *work) {
     ARG_UNUSED(work);
-    atomic_val_t clicks = atomic_set(&click_count, 0);
 
-    fccu_event_t evt = {
-            .timestamp_ms = k_uptime_get_32()
-    };
-
-    if (clicks == 1) {
-        evt.type = FCCU_EVT_BTN_SINGLE_CLICK;
+    if (click_count == 1U) {
+        click_count = 0U;
+        fccu_event_t evt = {
+                .type         = FCCU_EVT_BTN_SINGLE_CLICK,
+                .timestamp_ms = k_uptime_get_32()
+        };
         (void)fccu_event_post(&evt);
-    } else if (clicks >= 2) {
-        evt.type = FCCU_EVT_BTN_DOUBLE_CLICK;
-        (void)fccu_event_post(&evt);
+    } else {
+        click_count = 0U;
     }
 }
 
-static void click_timer_handler(struct k_timer *dummy) {
-    ARG_UNUSED(dummy);
-    k_work_submit(&click_work);
+static void debounce_work_handler(struct k_work *work) {
+    ARG_UNUSED(work);
+
+    /* Potwierdź, że przycisk nadal jest fizycznie wciśnięty (odrzuca drgania przy puszczeniu) */
+    if (gpio_pin_get_dt(&button) <= 0) {
+        return;
+    }
+
+    click_count++;
+
+    if (click_count >= 2U) {
+        (void)k_work_cancel_delayable(&click_timeout_work);
+        click_count = 0U;
+
+        fccu_event_t evt = {
+                .type         = FCCU_EVT_BTN_DOUBLE_CLICK,
+                .timestamp_ms = k_uptime_get_32()
+        };
+        (void)fccu_event_post(&evt);
+    } else {
+        (void)k_work_reschedule(&click_timeout_work, K_MSEC(FCCU_BUTTON_DOUBLE_CLICK_MS));
+    }
 }
 
 static void button_pressed_isr(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
@@ -39,14 +58,7 @@ static void button_pressed_isr(const struct device *dev, struct gpio_callback *c
     ARG_UNUSED(cb);
     ARG_UNUSED(pins);
 
-    static uint32_t last_time = 0U;
-    uint32_t now = k_uptime_get_32();
-
-    if ((now - last_time) > FCCU_BUTTON_DEBOUNCE_MS) {
-        atomic_inc(&click_count);
-        last_time = now;
-        k_timer_start(&click_timer, K_MSEC(FCCU_BUTTON_DOUBLE_CLICK_MS), K_NO_WAIT);
-    }
+    (void)k_work_reschedule(&debounce_work, K_MSEC(FCCU_BUTTON_DEBOUNCE_MS));
 }
 
 int fccu_button_init(void) {
@@ -54,8 +66,8 @@ int fccu_button_init(void) {
         return -ENODEV;
     }
 
-    k_timer_init(&click_timer, click_timer_handler, NULL);
-    k_work_init(&click_work, click_work_handler);
+    k_work_init_delayable(&debounce_work, debounce_work_handler);
+    k_work_init_delayable(&click_timeout_work, click_timeout_work_handler);
 
     gpio_pin_configure_dt(&button, GPIO_INPUT | GPIO_PULL_UP);
     gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);

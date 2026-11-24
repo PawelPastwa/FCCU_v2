@@ -7,9 +7,10 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 
+#include <zephyr/drivers/sensor.h>
+
 #if FCCU_USE_EXTRA_SENSORS
 #include <zephyr/drivers/adc.h>
-#include <zephyr/drivers/sensor.h>
 #endif
 
 LOG_MODULE_REGISTER(fccu_sensors, LOG_LEVEL_INF);
@@ -18,8 +19,11 @@ static const struct gpio_dt_spec flow_sensor_pin = GPIO_DT_SPEC_GET(DT_NODELABEL
 static struct gpio_callback flow_cb_data;
 static atomic_t pulse_count = ATOMIC_INIT(0);
 
+#if FCCU_USE_BME280
+static const struct device *const bme280_dev = DEVICE_DT_GET(DT_NODELABEL(bme280_76));
+#endif /* FCCU_USE_BME280 */
+
 #if FCCU_USE_EXTRA_SENSORS
-static const struct device *const bme280_dev    = DEVICE_DT_GET(DT_NODELABEL(bme280_76));
 static const struct adc_dt_spec adc_lp_pressure = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 0);
 static const struct adc_dt_spec adc_fc_voltage  = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 1);
 static const struct adc_dt_spec adc_sc_voltage  = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 2);
@@ -96,10 +100,13 @@ int fccu_sensors_init(void) {
     if (setup_adc_channel(&adc_hp_pressure) != 0) {
         LOG_WRN("ADS1015 hp_pressure init failed");
     }
+#endif
+
+#if FCCU_USE_BME280
     if (!device_is_ready(bme280_dev)) {
         LOG_WRN("BME280 (0x76) not ready");
     }
-#endif
+#endif /* FCCU_USE_BME280 */
 
     return 0;
 }
@@ -117,7 +124,9 @@ void fccu_sensors_read_all(fccu_sensors_data_t *out) {
     out->sc_voltage_mv  = read_adc_mv(&adc_sc_voltage);
     out->fc_current_mv  = read_adc_mv(&adc_fc_current);
     out->hp_pressure_mv = read_adc_mv(&adc_hp_pressure);
+#endif /* FCCU_USE_EXTRA_SENSORS */
 
+#if FCCU_USE_BME280
     if (device_is_ready(bme280_dev) && sensor_sample_fetch(bme280_dev) == 0) {
         struct sensor_value temp, press, hum;
         (void)sensor_channel_get(bme280_dev, SENSOR_CHAN_AMBIENT_TEMP, &temp);
@@ -128,7 +137,7 @@ void fccu_sensors_read_all(fccu_sensors_data_t *out) {
         out->ambient_humidity_x100 = (uint16_t)(hum.val1 * 100 + hum.val2 / 10000);
         out->ambient_pressure_x100 = (uint16_t)(press.val1 * 1000 + press.val2 / 1000);
     }
-#endif
+#endif /* FCCU_USE_BME280 */
 }
 
 uint32_t fccu_sensors_consume_flow_pulses(void) {

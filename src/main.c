@@ -1,6 +1,13 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+// fc - dodac tryb kolejny do purge (uzalezniony od napiecia fc ktore przyjdzie na canie z mcu), i wtedy purguje sie
+// termistor na fc, pomiedzy wentylatorami a ogniwem,  (FC module na plytce podpis, po tej samej st4ronie co can)
+// PCAN_USBBUS1
+// calkowite zuzycie do 3 miejsc po przecinku, oddzielna ramka,
+// chwilowe zuzycie 100 hz albo 1000hz (odzielna ramka), zwiekszyc dokladnosc.
+// calkowite zuzycie nie pojawia sie w savvy canie
+
 #include "fccu_config.h"
 #include "fccu_events.h"
 
@@ -30,9 +37,12 @@ static fccu_sensors_data_t sensors_data;
 static void trigger_purge(uint32_t now_ms) {
     bool is_running = (state_ctx.state == STATE_RUNNING);
     if (fccu_valves_start_purge(&valves_ctx, is_running, now_ms)) {
-        fccu_flow_reset_volume(&flow_ctx);
+        /* Nie zerujemy objętości przy purge — zliczamy sumaryczne zużycie od włączenia zasilania */
+        // fccu_flow_reset_volume(&flow_ctx);
         fccu_actuators_set_purge_valve(1U);
         fccu_actuators_schedule_purge_close(valves_ctx.purge_duration_ms);
+        fccu_can_send_state((uint8_t)state_ctx.state, valves_ctx.main_valve,
+                            valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
     }
 }
 
@@ -45,6 +55,11 @@ static void handle_event(const fccu_event_t *evt) {
         case FCCU_EVT_CAN_MAIN_VALVE:
             fccu_state_notify_can_rx(&state_ctx, evt->timestamp_ms);
             fccu_valves_set_main(&valves_ctx, evt->data.u8_val);
+            if (state_ctx.state == STATE_RUNNING) {
+                fccu_actuators_set_main_valve(valves_ctx.main_valve);
+                fccu_can_send_state((uint8_t)state_ctx.state, valves_ctx.main_valve,
+                                    valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
+            }
             break;
 
         case FCCU_EVT_CAN_MANUAL_PURGE:
@@ -54,7 +69,12 @@ static void handle_event(const fccu_event_t *evt) {
 
         case FCCU_EVT_CAN_FAN_CMD:
             fccu_state_notify_can_rx(&state_ctx, evt->timestamp_ms);
-            fccu_fan_set_manual(&fan_ctx, evt->data.u8_val);
+            fccu_fan_set_manual_duty(&fan_ctx, evt->data.fan_cmd.on, evt->data.fan_cmd.duty);
+            if (state_ctx.state == STATE_RUNNING) {
+                fccu_actuators_set_fan_duty(fan_ctx.duty);
+                fccu_can_send_state((uint8_t)state_ctx.state, valves_ctx.main_valve,
+                                    valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
+            }
             break;
 
         case FCCU_EVT_CAN_FAN_SETTINGS:
@@ -76,6 +96,9 @@ static void handle_event(const fccu_event_t *evt) {
         case FCCU_EVT_BTN_SINGLE_CLICK:
             if (state_ctx.state == STATE_RUNNING) {
                 fccu_valves_toggle_main(&valves_ctx);
+                fccu_actuators_set_main_valve(valves_ctx.main_valve);
+                fccu_can_send_state((uint8_t)state_ctx.state, valves_ctx.main_valve,
+                                    valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
             }
             break;
 
@@ -86,6 +109,8 @@ static void handle_event(const fccu_event_t *evt) {
         case FCCU_EVT_PURGE_TIMEOUT:
             fccu_valves_close_purge(&valves_ctx);
             fccu_actuators_set_purge_valve(0U);
+            fccu_can_send_state((uint8_t)state_ctx.state, valves_ctx.main_valve,
+                                valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
             break;
     }
 }
@@ -122,9 +147,11 @@ int main(void) {
         uint32_t now_ms = k_uptime_get_32();
 
         /* 1. Nadzór bezpieczeństwa i maszyna stanów */
+        /* Tymczasowo wyłączone (praca bez cyklicznego Heartbeatu):
         if (fccu_state_check_failsafe(&state_ctx, now_ms)) {
             LOG_WRN("CAN timeout! Entering FAIL-SAFE (STOPPED)");
         }
+        */
 
         fccu_state_t prev_state = state_ctx.state;
         fccu_state_t curr_state = fccu_state_step(&state_ctx, now_ms);
@@ -142,9 +169,12 @@ int main(void) {
             fccu_actuators_set_main_valve(valves_ctx.main_valve);
 
             if (fccu_valves_check_auto_purge(&valves_ctx, true, now_ms)) {
-                fccu_flow_reset_volume(&flow_ctx);
+                /* Nie zerujemy objętości przy auto-purge */
+                // fccu_flow_reset_volume(&flow_ctx);
                 fccu_actuators_set_purge_valve(1U);
                 fccu_actuators_schedule_purge_close(valves_ctx.purge_duration_ms);
+                fccu_can_send_state((uint8_t)curr_state, valves_ctx.main_valve,
+                                    valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
             }
 
             uint8_t temp_c = (sensors_data.ambient_temp_x100 > 0)

@@ -23,8 +23,8 @@
 #define FCCU_WDT_TIMEOUT_MS             2000U
 
 /* --- PRZYCISK --- */
-#define FCCU_BUTTON_DEBOUNCE_MS         50U
-#define FCCU_BUTTON_DOUBLE_CLICK_MS     200U
+#define FCCU_BUTTON_DEBOUNCE_MS         25U
+#define FCCU_BUTTON_DOUBLE_CLICK_MS     400U
 
 /* --- PRZELICZNIKI DZIELNIKÓW NAPIĘCIA (ze schematu FCCU v2) --- */
 /* Dzielnik 10k / 15k -> V_in = V_adc * 5 / 3 */
@@ -48,6 +48,9 @@
 
 #define FCCU_FC_C_ZERO_MV               2500    /* np. 2.5 V dla 0 A */
 #define FCCU_FC_C_SENS_MV_PER_A         100     /* np. 100 mV / A */
+
+//temperaturaaaa jest pijana no i buja sie po klubach
+#define FCCU_USE_BME280                 1
 
 /* 0 = tylko flow_meter, fan, main_valve, purge_valve | 1 = pełne ADC + BME280 */
 #define FCCU_USE_EXTRA_SENSORS          0
