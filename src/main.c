@@ -1,12 +1,3 @@
-// fc - dodac tryb kolejny do purge (uzalezniony od napiecia fc ktore przyjdzie na canie z mcu), i wtedy purguje sie
-// termistor na fc, pomiedzy wentylatorami a ogniwem,  (FC module na plytce podpis, po tej samej st4ronie co can)
-// calkowite zuzycie do 3 miejsc po przecinku, oddzielna ramka,
-// chwilowe zuzycie 100 hz albo 1000hz (odzielna ramka), zwiekszyc dokladnosc i wysylanie tak szybko jak robiony pomiar.
-// calkowite zuzycie nie pojawia sie w savvy canie
-// wentylatory maja zapamietywac ustawienia w pamieci flash czyli jezeli raz ustawimy na 30% wentylator albo nastawy p i d, i ze jest wlaczony to od razu po ponownym uruchomieniu pojazdu ma byc wlaczany 30% i nastawy ustawione, tak samo purge interwal itp. itd
-
-// PCAN_USBBUS1
-
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 

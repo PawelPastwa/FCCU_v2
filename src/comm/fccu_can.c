@@ -125,7 +125,7 @@ static void can_rx_callback(const struct device *dev, struct can_frame *frame, v
             struct hydrogreen_can_definitions_mcu_analog_fuel_cell_t msg;
             if (hydrogreen_can_definitions_mcu_analog_fuel_cell_unpack(&msg, frame->data, frame->dlc) == 0) {
                 unsigned int key = irq_lock();
-                mcu_fc_voltage_mv    = (int32_t)msg.fuel_cell_output_voltage;
+                mcu_fc_voltage_mv    = (int32_t)msg.fuel_cell_output_voltage * 2; //(int32_t)msg.fuel_cell_output_voltage;
                 mcu_fc_voltage_ts_ms = evt.timestamp_ms;
                 mcu_fc_voltage_seen  = true;
                 irq_unlock(key);

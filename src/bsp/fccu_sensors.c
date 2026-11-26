@@ -27,8 +27,10 @@ static uint64_t flow_total_pulses = 0ULL;
 static bool     flow_has_prev = false;
 
 #if FCCU_USE_BME280
-static const struct device *const bme280_dev = DEVICE_DT_GET(DT_NODELABEL(bme280_76));
-#endif /* FCCU_USE_BME280 */
+static const struct device *const bme280_dev_76 = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(bme280_76));
+static const struct device *const bme280_dev_77 = DEVICE_DT_GET_OR_NULL(DT_NODELABEL(bme280_77));
+static const struct device *bme280_dev = NULL;
+#endif
 
 #if FCCU_USE_EXTRA_SENSORS
 static const struct adc_dt_spec adc_lp_pressure = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 0);
@@ -179,10 +181,17 @@ int fccu_sensors_init(void) {
 #endif
 
 #if FCCU_USE_BME280
-    if (!device_is_ready(bme280_dev)) {
-        LOG_WRN("BME280 (0x76) not ready");
+    if (bme280_dev_76 != NULL && device_is_ready(bme280_dev_76)) {
+        bme280_dev = bme280_dev_76;
+        LOG_INF("BME/BMP280 ready at 0x76");
+    } else if (bme280_dev_77 != NULL && device_is_ready(bme280_dev_77)) {
+        bme280_dev = bme280_dev_77;
+        LOG_INF("BME/BMP280 ready at 0x77");
+    } else {
+        bme280_dev = NULL;
+        LOG_WRN("BME/BMP280 not ready at 0x76 or 0x77");
     }
-#endif /* FCCU_USE_BME280 */
+#endif
 
 #if FCCU_USE_FC_TEMP
     if (setup_adc_channel(&adc_fc_temp) != 0) {
