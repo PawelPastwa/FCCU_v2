@@ -727,33 +727,11 @@ target_sources(app PRIVATE
 
 ```
 
-## 4. Elektronika płytki `fccu_v2` i najczęstsze pułapki sprzętowe
 
-### 4.1. Magistrala `I2C0` (`GPIO35`/`GPIO34`), `ADS1015` i czujnik `BME/BMP280`
-
-Na magistrali **`I2C0`** (`SDA = GPIO35`, `SCL = GPIO34`) wlutowany jest na stałe przetwornik **`ADS1015`** o adresie **`0x48`**. Zewnętrzny moduł **`BME280` / `BMP280`** może odpowiadać wyłącznie pod adresem **`0x76`** lub **`0x77`** (nigdy `0x48`).
-
-Jeśli czujnik `BME/BMP280` zgłasza `not ready at 0x76 or 0x77`, a sama magistrala `I2C0` działa, problem leży po stronie fizycznej:
-
-* sprawdź multimetrem, czy między `VIN` a `GND` na samym module czujnika jest dokładnie $3{,}3\text{ V}$,
-
-* upewnij się, że przewody `SCL` i `SDA` nie są zamienione miejscami względem opisu na module (częsta pułapka przy kolejności pinów `VIN, GND, SCL, SDA`),
-
-* jeśli moduł ma 6 pinów (z wyprowadzeniem `CSB`), pin `CSB` musi być podłączony do $3{,}3\text{ V}$, aby aktywować tryb I2C,
-
-* jeśli zasilanie i połączenia są w 100% poprawne, sam układ czujnika jest uszkodzony i wymaga podmiany.
-
-### 4.2. Termistor NTC ogniwa (`GPIO10`) – skąd bierze się `-50.00 C`?
-
-Złącze termistora ogniwa (`J7 T_R`, opisane na płytce jako *FC module*) podłączone jest do pinu **`GPIO10` (`ADC1_CH9`)**, który tworzy dzielnik napięcia z rezystorem podciągającym $R_{58} = 10\text{ k}\Omega$ do $3{,}3\text{ V}$:
-
-$$
-V_{\text{out}} = 3{,}3\text{ V} \cdot \frac{R_{\text{NTC}}}{10\text{ k}\Omega + R_{\text{NTC}}}
-$$
 
 Opór termistora **NTC** maleje wraz ze wzrostem temperatury. Gdy termistor jest odpięty ($R_{\text{NTC}} \rightarrow \infty$), na wejściu pojawia się niemal pełne napięcie zasilania ($\approx 3154\text{ mV}$), co program celowo przelicza na dolny limit $-50{,}00^\circ\text{C}$ jako czytelny znak przerwy w obwodzie. Po podpięciu sprawnego termistora NTC $1\text{ k}\Omega$ w temperaturze pokojowej ($25^\circ\text{C}$) napięcie spada do około $300\text{ mV}$, a odczyt zaczyna pokazywać realną temperaturę ogniwa.
 
-## 5. Kompletna mapa ramek CAN (po aktualizacji DBC)
+## 4. Kompletna mapa ramek CAN (po aktualizacji DBC)
 
 Wszystkie sterowniki w pojeździe (**MCU, SWU, LCU, FCCU, TCU, EDU, CCU**) korzystają ze wspólnego pliku **`.dbc`** w repozytorium `lib-can-definitions` (29-bitowe identyfikatory rozszerzone).
 
@@ -794,7 +772,7 @@ Wszystkie sterowniki w pojeździe (**MCU, SWU, LCU, FCCU, TCU, EDU, CCU**) korzy
 
 ## 
 
-## 6. Krótki słowniczek pojęć
+## 5. Krótki słowniczek pojęć
 
 * **ADC** – przetwornik analogowo-cyfrowy; zamienia napięcie elektryczne (np. z termistora) na liczbę odczytywaną przez program.
 
