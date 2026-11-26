@@ -1,7 +1,3 @@
-//
-// Created by pawel on 19/11/2026.
-//
-
 #ifndef INZYNIERKA_FCCU_EVENTS_H
 #define INZYNIERKA_FCCU_EVENTS_H
 
@@ -38,6 +34,10 @@ typedef struct {
         struct {
             uint16_t interval_s;
             uint16_t duration_ms;
+            uint8_t  has_voltage_cfg;
+            uint8_t  mode;
+            uint16_t voltage_threshold_mv;
+            uint8_t  voltage_cooldown_s;
         } valve_settings;
     } data;
 } fccu_event_t;

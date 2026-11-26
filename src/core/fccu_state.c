@@ -35,6 +35,12 @@ fccu_state_t fccu_state_step(fccu_state_ctx_t *ctx, uint32_t now_ms) {
         return STATE_STOPPED;
     }
 
+#if FCCU_AUTO_START_FROM_INIT
+    if (ctx->state == STATE_INIT) {
+        ctx->state = STATE_STARTING;
+    }
+#endif
+
     if (ctx->state == STATE_STARTING) {
         ctx->state = STATE_RUNNING;
         ctx->last_can_rx_ms = now_ms;

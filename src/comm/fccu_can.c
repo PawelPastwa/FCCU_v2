@@ -1,312 +1,339 @@
-#include "comm/fccu_can.h"
-#include "comm/dbc/hydrogreen_can_definitions.h"
-#include "fccu_config.h"
-#include "fccu_events.h"
-#include "system_status.h"
+// fc - dodac tryb kolejny do purge (uzalezniony od napiecia fc ktore przyjdzie na canie z mcu), i wtedy purguje sie
+// termistor na fc, pomiedzy wentylatorami a ogniwem,  (FC module na plytce podpis, po tej samej st4ronie co can)
+// calkowite zuzycie do 3 miejsc po przecinku, oddzielna ramka,
+// chwilowe zuzycie 100 hz albo 1000hz (odzielna ramka), zwiekszyc dokladnosc i wysylanie tak szybko jak robiony pomiar.
+// calkowite zuzycie nie pojawia sie w savvy canie
+// wentylatory maja zapamietywac ustawienia w pamieci flash czyli jezeli raz ustawimy na 30% wentylator albo nastawy p i d, i ze jest wlaczony to od razu po ponownym uruchomieniu pojazdu ma byc wlaczany 30% i nastawy ustawione, tak samo purge interwal itp. itd
+
+// PCAN_USBBUS1
 
 #include <zephyr/kernel.h>
-#include <zephyr/sys/atomic.h>
-#include <zephyr/drivers/can.h>
 #include <zephyr/logging/log.h>
 
-LOG_MODULE_REGISTER(fccu_can, LOG_LEVEL_INF);
+#include "fccu_config.h"
+#include "fccu_events.h"
 
-static const struct device *const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
-static atomic_t can_tx_acked = ATOMIC_INIT(0);
+#include "core/fccu_state.h"
+#include "core/fccu_valves.h"
+#include "core/fccu_fan.h"
+#include "core/fccu_flow.h"
 
-static void can_tx_cb(const struct device *dev, int error, void *user_data) {
-    ARG_UNUSED(dev);
-    ARG_UNUSED(user_data);
+#include "bsp/fccu_actuators.h"
+#include "bsp/fccu_button.h"
+#include "bsp/fccu_sensors.h"
+#include "bsp/fccu_watchdog.h"
+#include "bsp/system_status.h"
+#include "bsp/fccu_storage.h"
 
-    if (error == 0) {
-        atomic_set(&can_tx_acked, 1);
+#include "comm/fccu_can.h"
+
+LOG_MODULE_REGISTER(fccu_main, LOG_LEVEL_INF);
+
+K_MSGQ_DEFINE(fccu_event_q, sizeof(fccu_event_t), 16, 4);
+
+static fccu_state_ctx_t    state_ctx;
+static fccu_valves_ctx_t   valves_ctx;
+static fccu_fan_ctx_t      fan_ctx;
+static fccu_flow_ctx_t     flow_ctx;
+static fccu_sensors_data_t sensors_data;
+
+static uint8_t get_fan_temp_c(void) {
+    int16_t temp_x100 =
+#if FCCU_USE_FC_TEMP
+            sensors_data.fc_temp_x100;
+#else
+    sensors_data.ambient_temp_x100;
+#endif
+    return (temp_x100 > 0) ? (uint8_t)(temp_x100 / 100) : 0U;
+}
+
+static void save_settings_to_flash(void) {
+    fccu_persisted_cfg_t cfg = {
+            .fan_mode                   = fan_ctx.mode,
+            .fan_manual_on              = fan_ctx.manual_state,
+            .fan_manual_duty            = fan_ctx.manual_duty,
+            .fan_p_gain                 = fan_ctx.p_gain,
+            .fan_i_gain                 = fan_ctx.i_gain,
+            .fan_d_gain                 = fan_ctx.d_gain,
+            .purge_mode                 = valves_ctx.purge_mode,
+            .purge_interval_s           = valves_ctx.purge_interval_s,
+            .purge_duration_ms          = valves_ctx.purge_duration_ms,
+            .purge_voltage_threshold_mv = valves_ctx.purge_voltage_threshold_mv,
+            .purge_voltage_cooldown_s   = valves_ctx.purge_voltage_cooldown_s
+    };
+    (void)fccu_storage_save(&cfg);
+}
+
+static void load_settings_from_flash(void) {
+    fccu_persisted_cfg_t cfg;
+    if (!fccu_storage_load(&cfg)) {
+        return;
+    }
+
+    fccu_fan_set_settings(&fan_ctx, cfg.fan_mode, cfg.fan_p_gain, cfg.fan_i_gain, cfg.fan_d_gain);
+    fccu_fan_set_manual_duty(&fan_ctx, cfg.fan_manual_on, cfg.fan_manual_duty);
+    fccu_fan_resume(&fan_ctx);
+
+    fccu_valves_set_settings(&valves_ctx,
+                             cfg.purge_interval_s,
+                             cfg.purge_duration_ms,
+                             true,
+                             cfg.purge_mode,
+                             cfg.purge_voltage_threshold_mv,
+                             cfg.purge_voltage_cooldown_s);
+
+    LOG_INF("Restored Flash cfg: fan(mode=%u on=%u duty=%u P=%u I=%u D=%u) purge(mode=%u int=%us dur=%ums thr=%umV cd=%us)",
+            fan_ctx.mode, fan_ctx.manual_state, fan_ctx.manual_duty,
+            fan_ctx.p_gain, fan_ctx.i_gain, fan_ctx.d_gain,
+            valves_ctx.purge_mode, valves_ctx.purge_interval_s, valves_ctx.purge_duration_ms,
+            valves_ctx.purge_voltage_threshold_mv, valves_ctx.purge_voltage_cooldown_s);
+}
+
+static void trigger_purge(uint32_t now_ms) {
+    bool is_running = (state_ctx.state == STATE_RUNNING);
+    if (fccu_valves_start_purge(&valves_ctx, is_running, now_ms)) {
+        /* Nie zerujemy objętości przy purge — zliczamy sumaryczne zużycie od włączenia zasilania */
+        fccu_actuators_set_purge_valve(1U);
+        fccu_actuators_schedule_purge_close(valves_ctx.purge_duration_ms);
+        fccu_can_send_state((uint8_t)state_ctx.state, valves_ctx.main_valve,
+                            valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
     }
 }
 
-static void can_rx_callback(const struct device *dev, struct can_frame *frame, void *user_data) {
-    ARG_UNUSED(dev);
-    ARG_UNUSED(user_data);
+static void handle_event(const fccu_event_t *evt) {
+    switch (evt->type) {
+        case FCCU_EVT_CAN_SYSTEM_ENABLE:
+            fccu_state_set_enable(&state_ctx, evt->data.u8_val, evt->timestamp_ms);
+            break;
 
-    fccu_event_t evt = {
-            .timestamp_ms = k_uptime_get_32()
-    };
-
-    switch (frame->id) {
-        case HYDROGREEN_CAN_DEFINITIONS_FCCU_SYSTEM_ENABLE_FRAME_ID: {
-            struct hydrogreen_can_definitions_fccu_system_enable_t msg;
-            if (hydrogreen_can_definitions_fccu_system_enable_unpack(&msg, frame->data, frame->dlc) == 0) {
-                evt.type = FCCU_EVT_CAN_SYSTEM_ENABLE;
-                evt.data.u8_val = msg.cmd_system_enable;
-                (void)fccu_event_post(&evt);
+        case FCCU_EVT_CAN_MAIN_VALVE: {
+            fccu_state_notify_can_rx(&state_ctx, evt->timestamp_ms);
+            uint8_t prev_main = valves_ctx.main_valve;
+            fccu_valves_set_main(&valves_ctx, evt->data.u8_val);
+            if (prev_main == 0U && valves_ctx.main_valve == 1U) {
+                fccu_valves_sync_purge_timer(&valves_ctx, evt->timestamp_ms);
+            }
+            if (state_ctx.state == STATE_RUNNING) {
+                fccu_actuators_set_main_valve(valves_ctx.main_valve);
+                fccu_can_send_state((uint8_t)state_ctx.state, valves_ctx.main_valve,
+                                    valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
             }
             break;
         }
 
-        case HYDROGREEN_CAN_DEFINITIONS_FCCU_MAIN_VALVE_COMMAND_FRAME_ID: {
-            struct hydrogreen_can_definitions_fccu_main_valve_command_t msg;
-            if (hydrogreen_can_definitions_fccu_main_valve_command_unpack(&msg, frame->data, frame->dlc) == 0) {
-                evt.type = FCCU_EVT_CAN_MAIN_VALVE;
-                evt.data.u8_val = msg.cmd_main_valve;
-                (void)fccu_event_post(&evt);
+        case FCCU_EVT_CAN_MANUAL_PURGE:
+            fccu_state_notify_can_rx(&state_ctx, evt->timestamp_ms);
+            trigger_purge(evt->timestamp_ms);
+            break;
+
+        case FCCU_EVT_CAN_FAN_CMD:
+            fccu_state_notify_can_rx(&state_ctx, evt->timestamp_ms);
+            fccu_fan_set_manual_duty(&fan_ctx, evt->data.fan_cmd.on, evt->data.fan_cmd.duty);
+            save_settings_to_flash();
+            if (state_ctx.state == STATE_RUNNING) {
+                fccu_actuators_set_fan_duty(fan_ctx.duty);
+                fccu_can_send_state((uint8_t)state_ctx.state, valves_ctx.main_valve,
+                                    valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
             }
             break;
-        }
 
-        case HYDROGREEN_CAN_DEFINITIONS_FCCU_MANUAL_PURGE_FRAME_ID: {
-            struct hydrogreen_can_definitions_fccu_manual_purge_t msg;
-            if (hydrogreen_can_definitions_fccu_manual_purge_unpack(&msg, frame->data, frame->dlc) == 0 &&
-                msg.cmd_manual_purge == HYDROGREEN_CAN_DEFINITIONS_FCCU_MANUAL_PURGE_CMD_MANUAL_PURGE_TRIGGER_PURGE_CHOICE) {
-                evt.type = FCCU_EVT_CAN_MANUAL_PURGE;
-                (void)fccu_event_post(&evt);
+        case FCCU_EVT_CAN_FAN_SETTINGS:
+            fccu_state_notify_can_rx(&state_ctx, evt->timestamp_ms);
+            fccu_fan_set_settings(&fan_ctx,
+                                  evt->data.fan_settings.mode,
+                                  evt->data.fan_settings.p_gain,
+                                  evt->data.fan_settings.i_gain,
+                                  evt->data.fan_settings.d_gain);
+            save_settings_to_flash();
+            if (state_ctx.state == STATE_RUNNING) {
+                fccu_actuators_set_fan_duty(fan_ctx.duty);
+                fccu_can_send_state((uint8_t)state_ctx.state, valves_ctx.main_valve,
+                                    valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
             }
             break;
-        }
 
-        case HYDROGREEN_CAN_DEFINITIONS_FCCU_FAN_FRAME_ID: {
-            struct hydrogreen_can_definitions_fccu_fan_t msg;
-            if (hydrogreen_can_definitions_fccu_fan_unpack(&msg, frame->data, frame->dlc) == 0) {
-                evt.type = FCCU_EVT_CAN_FAN_CMD;
-                evt.data.fan_cmd.on = msg.cmd_fan_on;
-                evt.data.fan_cmd.duty = msg.cmd_fan_duty;
-                (void) fccu_event_post(&evt);
-            } else if (frame->dlc == 1U) {
-                /* Kompatybilność wsteczna ze starą 1-bajtową ramką 0x513 */
-                evt.type = FCCU_EVT_CAN_FAN_CMD;
-                evt.data.fan_cmd.on = (uint8_t) (frame->data[0] & 0x01U);
-                evt.data.fan_cmd.duty = (evt.data.fan_cmd.on != 0U) ? FCCU_FAN_DUTY_MAX_PCT : FCCU_FAN_DUTY_MIN_PCT;
-                (void) fccu_event_post(&evt);
+        case FCCU_EVT_CAN_VALVE_SETTINGS:
+            fccu_state_notify_can_rx(&state_ctx, evt->timestamp_ms);
+            fccu_valves_set_settings(&valves_ctx,
+                                     evt->data.valve_settings.interval_s,
+                                     evt->data.valve_settings.duration_ms,
+                                     (evt->data.valve_settings.has_voltage_cfg != 0U),
+                                     evt->data.valve_settings.mode,
+                                     evt->data.valve_settings.voltage_threshold_mv,
+                                     evt->data.valve_settings.voltage_cooldown_s);
+            save_settings_to_flash();
+            break;
+
+        case FCCU_EVT_BTN_SINGLE_CLICK:
+            if (state_ctx.state == STATE_RUNNING) {
+                uint8_t prev_main = valves_ctx.main_valve;
+                fccu_valves_toggle_main(&valves_ctx);
+                if (prev_main == 0U && valves_ctx.main_valve == 1U) {
+                    fccu_valves_sync_purge_timer(&valves_ctx, evt->timestamp_ms);
+                }
+                fccu_actuators_set_main_valve(valves_ctx.main_valve);
+                fccu_can_send_state((uint8_t)state_ctx.state, valves_ctx.main_valve,
+                                    valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
             }
             break;
-        }
 
-        case HYDROGREEN_CAN_DEFINITIONS_FCCU_FAN_SETTINGS_FRAME_ID: {
-            struct hydrogreen_can_definitions_fccu_fan_settings_t msg;
-            if (hydrogreen_can_definitions_fccu_fan_settings_unpack(&msg, frame->data, frame->dlc) == 0) {
-                evt.type = FCCU_EVT_CAN_FAN_SETTINGS;
-                evt.data.fan_settings.mode   = msg.fan_mode;
-                evt.data.fan_settings.p_gain = msg.p_gain;
-                evt.data.fan_settings.i_gain = msg.i_gain;
-                evt.data.fan_settings.d_gain = msg.d_gain;
-                (void)fccu_event_post(&evt);
-            }
+        case FCCU_EVT_BTN_DOUBLE_CLICK:
+            trigger_purge(evt->timestamp_ms);
             break;
-        }
 
-        case HYDROGREEN_CAN_DEFINITIONS_FCCU_VALVE_SETTINGS_FRAME_ID: {
-            struct hydrogreen_can_definitions_fccu_valve_settings_t msg;
-            if (hydrogreen_can_definitions_fccu_valve_settings_unpack(&msg, frame->data, frame->dlc) == 0) {
-                evt.type = FCCU_EVT_CAN_VALVE_SETTINGS;
-                evt.data.valve_settings.interval_s  = (msg.purge_interval_s > 0) ? (uint16_t)msg.purge_interval_s : 0U;
-                evt.data.valve_settings.duration_ms = msg.purge_duration_ms;
-                (void)fccu_event_post(&evt);
-            }
-            break;
-        }
-
-        default:
+        case FCCU_EVT_PURGE_TIMEOUT:
+            fccu_valves_close_purge(&valves_ctx);
+            fccu_actuators_set_purge_valve(0U);
+            fccu_can_send_state((uint8_t)state_ctx.state, valves_ctx.main_valve,
+                                valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
             break;
     }
 }
 
-int fccu_can_init(void) {
-    if (!device_is_ready(can_dev)) {
-        LOG_ERR("CAN device not ready");
-        return -ENODEV;
+static void flow_fast_thread_fn(void *p1, void *p2, void *p3) {
+    ARG_UNUSED(p1);
+    ARG_UNUSED(p2);
+    ARG_UNUSED(p3);
+
+    while (1) {
+        fccu_flow_snapshot_t snap;
+        fccu_sensors_get_flow_snapshot(&snap);
+        uint32_t flow_x1000 = fccu_flow_calc_x1000_from_period_us(snap.effective_period_us);
+        fccu_can_send_flow_fast(flow_x1000);
+        k_sleep(K_MSEC(FCCU_FLOW_FAST_PERIOD_MS));
+    }
+}
+
+K_THREAD_DEFINE(flow_fast_tid, 1024, flow_fast_thread_fn, NULL, NULL, NULL, 6, 0, 100);
+
+int main(void) {
+    init_system_status();
+    fccu_state_init(&state_ctx);
+    fccu_valves_init(&valves_ctx);
+    fccu_fan_init(&fan_ctx);
+    fccu_flow_init(&flow_ctx);
+
+    if (fccu_actuators_init() != 0 ||
+        fccu_button_init() != 0 ||
+        fccu_sensors_init() != 0 ||
+        fccu_can_init() != 0 ||
+        fccu_watchdog_init() != 0) {
+        LOG_ERR("Hardware init failed! Entering safe halt.");
+        fccu_actuators_emergency_stop();
+        return -1;
     }
 
-    static const uint32_t rx_ids[] = {
-            HYDROGREEN_CAN_DEFINITIONS_FCCU_SYSTEM_ENABLE_FRAME_ID,
-            HYDROGREEN_CAN_DEFINITIONS_FCCU_MAIN_VALVE_COMMAND_FRAME_ID,
-            HYDROGREEN_CAN_DEFINITIONS_FCCU_MANUAL_PURGE_FRAME_ID,
-            HYDROGREEN_CAN_DEFINITIONS_FCCU_FAN_FRAME_ID,
-            HYDROGREEN_CAN_DEFINITIONS_FCCU_FAN_SETTINGS_FRAME_ID,
-            HYDROGREEN_CAN_DEFINITIONS_FCCU_VALVE_SETTINGS_FRAME_ID
-    };
+    if (fccu_storage_init() == 0) {
+        load_settings_from_flash();
+    }
 
-    for (size_t i = 0; i < ARRAY_SIZE(rx_ids); i++) {
-        const struct can_filter filter = {
-                .flags = CAN_FILTER_IDE,
-                .id    = rx_ids[i],
-                .mask  = CAN_EXT_ID_MASK
-        };
+    fccu_sensors_read_all(&sensors_data);
+    uint32_t boot_ms = k_uptime_get_32();
+    fccu_state_t boot_state = fccu_state_step(&state_ctx, boot_ms);
 
-        int ret = can_add_rx_filter(can_dev, can_rx_callback, NULL, &filter);
-        if (ret < 0) {
-            LOG_ERR("Failed to add CAN RX filter 0x%03x: %d", rx_ids[i], ret);
-            return ret;
+    if (boot_state == STATE_RUNNING) {
+        fccu_valves_sync_purge_timer(&valves_ctx, boot_ms);
+        fccu_fan_resume(&fan_ctx);
+        fccu_fan_step(&fan_ctx, true, get_fan_temp_c());
+        fccu_actuators_set_fan_duty(fan_ctx.duty);
+    } else {
+        fccu_actuators_emergency_stop();
+    }
+
+    fccu_can_send_state((uint8_t)boot_state, valves_ctx.main_valve,
+                        valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
+
+    LOG_INF("FCCU started in state=%u (fan duty=%u%%)", (unsigned int)boot_state, fan_ctx.duty);
+
+    uint32_t last_1s_tick_ms = boot_ms;
+    fccu_state_t prev_state = boot_state;
+    fccu_event_t evt;
+
+    while (1) {
+        fccu_watchdog_feed();
+
+        if (k_msgq_get(&fccu_event_q, &evt, K_MSEC(50)) == 0) {
+            handle_event(&evt);
         }
-    }
 
-    int ret = can_start(can_dev);
-    if (ret != 0) {
-        LOG_ERR("Failed to start CAN: %d", ret);
-        return ret;
+        uint32_t now_ms = k_uptime_get_32();
+        fccu_state_t curr_state = fccu_state_step(&state_ctx, now_ms);
+
+        /* 1. Reakcja na zmianę stanu */
+        if (prev_state != curr_state) {
+            if (curr_state == STATE_RUNNING) {
+                fccu_valves_sync_purge_timer(&valves_ctx, now_ms);
+                fccu_fan_resume(&fan_ctx);
+                fccu_fan_step(&fan_ctx, true, get_fan_temp_c());
+                fccu_actuators_set_fan_duty(fan_ctx.duty);
+            } else {
+                fccu_valves_reset_outputs(&valves_ctx);
+                fccu_fan_stop(&fan_ctx);
+                fccu_actuators_emergency_stop();
+            }
+            fccu_can_send_state((uint8_t)curr_state, valves_ctx.main_valve,
+                                valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
+            prev_state = curr_state;
+        }
+
+        /* 2. Wykonanie wyjść zależnie od stanu */
+        if (curr_state == STATE_STOPPED || curr_state == STATE_INIT) {
+            fccu_valves_reset_outputs(&valves_ctx);
+            fccu_fan_stop(&fan_ctx);
+            fccu_actuators_emergency_stop();
+        } else if (curr_state == STATE_RUNNING) {
+            fccu_actuators_set_main_valve(valves_ctx.main_valve);
+
+            int32_t mcu_fc_v_mv = 0;
+            bool mcu_fc_v_valid = fccu_can_get_mcu_fc_voltage_mv(&mcu_fc_v_mv, now_ms);
+
+            if (fccu_valves_check_auto_purge(&valves_ctx, true, now_ms, mcu_fc_v_valid, mcu_fc_v_mv)) {
+                fccu_actuators_set_purge_valve(1U);
+                fccu_actuators_schedule_purge_close(valves_ctx.purge_duration_ms);
+                fccu_can_send_state((uint8_t)curr_state, valves_ctx.main_valve,
+                                    valves_ctx.purge_valve, fan_ctx.state, fan_ctx.duty);
+            }
+
+            fccu_fan_step(&fan_ctx, true, get_fan_temp_c());
+            fccu_actuators_set_fan_duty(fan_ctx.duty);
+        }
+
+        /* 3. Zadania okresowe co 1 s (czujniki + przepływ + telemetria CAN) */
+        if ((now_ms - last_1s_tick_ms) >= 1000U) {
+            last_1s_tick_ms = now_ms;
+
+            fccu_sensors_read_all(&sensors_data);
+
+#if FCCU_USE_FC_TEMP
+            LOG_INF("FC temp: %d mV -> %d.%02d C",
+                    sensors_data.fc_temp_mv,
+                    sensors_data.fc_temp_x100 / 100,
+                    (sensors_data.fc_temp_x100 < 0 ? -sensors_data.fc_temp_x100 : sensors_data.fc_temp_x100) % 100);
+#endif
+
+            fccu_flow_snapshot_t flow_snap;
+            fccu_sensors_get_flow_snapshot(&flow_snap);
+            fccu_flow_update_fast(&flow_ctx, flow_snap.effective_period_us, flow_snap.total_pulses);
+
+            fccu_telemetry_t tel = {
+                    .state                 = curr_state,
+                    .main_valve            = valves_ctx.main_valve,
+                    .purge_valve           = valves_ctx.purge_valve,
+                    .fan_state             = fan_ctx.state,
+                    .fan_duty              = fan_ctx.duty,
+                    .total_volume_x1000    = flow_ctx.total_volume_x1000,
+                    .lp_pressure_x100      = (sensors_data.lp_pressure_mv > 0) ? (uint16_t)sensors_data.lp_pressure_mv : 0U,
+                    .hp_pressure_x100      = (sensors_data.hp_pressure_mv > 0) ? (uint16_t)sensors_data.hp_pressure_mv : 0U,
+                    .fc_voltage_x100       = (int16_t)sensors_data.fc_voltage_mv,
+                    .fc_current_x100       = (int16_t)sensors_data.fc_current_mv,
+                    .fc_temp_x100          = sensors_data.fc_temp_x100,
+                    .ambient_temp_x100     = sensors_data.ambient_temp_x100,
+                    .ambient_humidity_x100 = sensors_data.ambient_humidity_x100,
+                    .ambient_pressure_x100 = sensors_data.ambient_pressure_x100
+            };
+            fccu_can_send_telemetry(&tel);
+        }
     }
 
     return 0;
-}
-
-void fccu_can_send_state(uint8_t state, uint8_t main_valve, uint8_t purge_valve, uint8_t fan_state, uint8_t fan_duty) {
-    if (!device_is_ready(can_dev)) {
-        return;
-    }
-
-    struct hydrogreen_can_definitions_fccu_state_t state_msg = {
-            .state       = state,
-            .main_valve  = main_valve,
-            .purge_valve = purge_valve,
-            .fan_state   = fan_state,
-            .fan_duty    = fan_duty
-    };
-
-    struct can_frame state_frame = {
-            .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_STATE_FRAME_ID,
-            .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_STATE_LENGTH,
-            .flags = CAN_FRAME_IDE
-    };
-
-    if (hydrogreen_can_definitions_fccu_state_pack(state_frame.data, &state_msg, sizeof(state_frame.data)) > 0) {
-        (void)can_send(can_dev, &state_frame, K_MSEC(10), can_tx_cb, NULL);
-    }
-}
-
-void fccu_can_send_telemetry(const fccu_telemetry_t *tel) {
-    if (tel == NULL) {
-        return;
-    }
-
-    if (!device_is_ready(can_dev)) {
-        set_system_status(STATUS_CAN_ERROR);
-        return;
-    }
-
-    enum can_state state;
-    struct can_bus_err_cnt err_cnt;
-    if (can_get_state(can_dev, &state, &err_cnt) == 0) {
-        if (state == CAN_STATE_BUS_OFF) {
-            LOG_WRN("CAN BUS_OFF detected, attempting recovery...");
-            set_system_status(STATUS_CAN_ERROR);
-            (void)can_recover(can_dev, K_MSEC(100));
-            return;
-        }
-        if (state == CAN_STATE_STOPPED) {
-            set_system_status(STATUS_CAN_ERROR);
-            return;
-        }
-    }
-
-    int prev_acked = (int)atomic_set(&can_tx_acked, 0);
-    int tx_err = -EIO;
-
-    /* 1. Ramka FCCU_STATE (0x500, 2 bajty) */
-    struct hydrogreen_can_definitions_fccu_state_t state_msg = {
-            .state       = (uint8_t)tel->state,
-            .main_valve  = tel->main_valve,
-            .purge_valve = tel->purge_valve,
-            .fan_state   = tel->fan_state,
-            .fan_duty    = tel->fan_duty
-    };
-
-    struct can_frame state_frame = {
-            .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_STATE_FRAME_ID,
-            .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_STATE_LENGTH,
-            .flags = CAN_FRAME_IDE
-    };
-
-    if (hydrogreen_can_definitions_fccu_state_pack(state_frame.data, &state_msg, sizeof(state_frame.data)) > 0) {
-        tx_err = can_send(can_dev, &state_frame, K_MSEC(10), can_tx_cb, NULL);
-    }
-
-    /* 2. Ramka FCCU_HYDROGEN (0x502, 8 bajtów) */
-    struct hydrogreen_can_definitions_fccu_hydrogen_t h2_msg = {
-            .h2_flow         = tel->flow_x100,
-            .h2_lp_pressure  = tel->lp_pressure_x100,
-            .h2_hp_pressure  = tel->hp_pressure_x100,
-            .leakage_voltage = 0
-    };
-
-    struct can_frame h2_frame = {
-            .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_HYDROGEN_FRAME_ID,
-            .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_HYDROGEN_LENGTH,
-            .flags = CAN_FRAME_IDE
-    };
-
-    if (hydrogreen_can_definitions_fccu_hydrogen_pack(h2_frame.data, &h2_msg, sizeof(h2_frame.data)) > 0) {
-        int ret = can_send(can_dev, &h2_frame, K_MSEC(10), can_tx_cb, NULL);
-        if (ret != 0) {
-            tx_err = ret;
-        }
-    }
-
-    /* 3. Ramka FCCU_HYDROGEN_TOTAL (0x506, 4 bajty — narastające zużycie od włączenia zasilania) */
-    struct hydrogreen_can_definitions_fccu_hydrogen_total_t h2_total_msg = {
-            .h2_total_volume = (tel->total_volume_ln > 0)
-                               ? hydrogreen_can_definitions_fccu_hydrogen_total_h2_total_volume_encode((double)tel->total_volume_ln)
-                               : 0U
-    };
-
-    struct can_frame h2_total_frame = {
-            .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_HYDROGEN_TOTAL_FRAME_ID,
-            .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_HYDROGEN_TOTAL_LENGTH,
-            .flags = CAN_FRAME_IDE
-    };
-
-    if (hydrogreen_can_definitions_fccu_hydrogen_total_pack(h2_total_frame.data, &h2_total_msg, sizeof(h2_total_frame.data)) > 0) {
-        int ret = can_send(can_dev, &h2_total_frame, K_MSEC(10), can_tx_cb, NULL);
-        if (ret != 0) {
-            tx_err = ret;
-        }
-    }
-
-#if FCCU_USE_EXTRA_SENSORS
-    /* 4. Ramka FCCU_POWER (0x503, 8 bajtów) */
-    struct hydrogreen_can_definitions_fccu_power_t pwr_msg = {
-            .fc_voltage   = tel->fc_voltage_x100,
-            .fc_current   = tel->fc_current_x100,
-            .dcdc_voltage = 0,
-            .dcdc_current = 0
-    };
-
-    struct can_frame pwr_frame = {
-            .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_POWER_FRAME_ID,
-            .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_POWER_LENGTH,
-            .flags = CAN_FRAME_IDE
-    };
-
-    if (hydrogreen_can_definitions_fccu_power_pack(pwr_frame.data, &pwr_msg, sizeof(pwr_frame.data)) > 0) {
-        int ret = can_send(can_dev, &pwr_frame, K_MSEC(10), can_tx_cb, NULL);
-        if (ret != 0) {
-            tx_err = ret;
-        }
-    }
-#endif
-
-#if FCCU_USE_BME280
-    /* 5. Ramka FCCU_ENVIRONMENT (0x504, 8 bajtów) */
-    struct hydrogreen_can_definitions_fccu_environment_t env_msg = {
-            .fc_temp_c        = tel->ambient_temp_x100,
-            .ambient_temp_c   = tel->ambient_temp_x100,
-            .ambient_humidity = tel->ambient_humidity_x100,
-            .ambient_pressure = tel->ambient_pressure_x100
-    };
-
-    struct can_frame env_frame = {
-            .id    = HYDROGREEN_CAN_DEFINITIONS_FCCU_ENVIRONMENT_FRAME_ID,
-            .dlc   = HYDROGREEN_CAN_DEFINITIONS_FCCU_ENVIRONMENT_LENGTH,
-            .flags = CAN_FRAME_IDE
-    };
-
-    if (hydrogreen_can_definitions_fccu_environment_pack(env_frame.data, &env_msg, sizeof(env_frame.data)) > 0) {
-        int ret = can_send(can_dev, &env_frame, K_MSEC(10), can_tx_cb, NULL);
-        if (ret != 0) {
-            tx_err = ret;
-        }
-    }
-#endif
-
-    if (tx_err == 0 && prev_acked == 1) {
-        set_system_status(STATUS_CAN_OK);
-    } else {
-        set_system_status(STATUS_CAN_ERROR);
-    }
 }

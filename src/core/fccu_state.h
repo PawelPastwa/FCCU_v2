@@ -1,7 +1,3 @@
-//
-// Created by pawel on 19/11/2026.
-//
-
 #ifndef INZYNIERKA_FCCU_STATE_H
 #define INZYNIERKA_FCCU_STATE_H
 

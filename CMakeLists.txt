@@ -23,10 +23,12 @@ target_sources(app PRIVATE
         src/bsp/fccu_actuators.c
         src/bsp/fccu_button.c
         src/bsp/fccu_sensors.c
+        src/bsp/fccu_storage.c
         src/bsp/system_status.c
         src/bsp/fccu_watchdog.c
         src/comm/fccu_can.c
         src/comm/dbc/hydrogreen_can_definitions.c
+
 )
 
 # Rygorystyczna kontrola jakości kodu aplikacji

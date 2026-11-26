@@ -20,6 +20,19 @@ void fccu_fan_stop(fccu_fan_ctx_t *ctx) {
     ctx->pid_prev_error = 0;
 }
 
+void fccu_fan_resume(fccu_fan_ctx_t *ctx) {
+    if (ctx == NULL) {
+        return;
+    }
+    ctx->pid_integral = 0;
+    ctx->pid_prev_error = 0;
+
+    if (ctx->mode == FAN_MODE_MANUAL) {
+        ctx->state = (ctx->manual_state != 0U && ctx->manual_duty > FCCU_FAN_DUTY_MIN_PCT) ? 1U : 0U;
+        ctx->duty  = (ctx->state != 0U) ? fccu_fan_clamp_duty(ctx->manual_duty) : FCCU_FAN_DUTY_MIN_PCT;
+    }
+}
+
 void fccu_fan_set_settings(fccu_fan_ctx_t *ctx, uint8_t mode, uint16_t p, uint16_t i, uint16_t d) {
     if (ctx == NULL) {
         return;
@@ -34,6 +47,10 @@ void fccu_fan_set_settings(fccu_fan_ctx_t *ctx, uint8_t mode, uint16_t p, uint16
     ctx->p_gain = p;
     ctx->i_gain = i;
     ctx->d_gain = d;
+
+    if (ctx->mode == FAN_MODE_MANUAL) {
+        fccu_fan_resume(ctx);
+    }
 }
 
 void fccu_fan_set_manual_duty(fccu_fan_ctx_t *ctx, uint8_t fan_on, uint8_t duty_percent) {
@@ -41,9 +58,12 @@ void fccu_fan_set_manual_duty(fccu_fan_ctx_t *ctx, uint8_t fan_on, uint8_t duty_
         return;
     }
     uint8_t clamped = fccu_fan_clamp_duty(duty_percent);
-    ctx->state = (fan_on != 0U && clamped > FCCU_FAN_DUTY_MIN_PCT) ? 1U : 0U;
+    ctx->manual_state = (fan_on != 0U && clamped > FCCU_FAN_DUTY_MIN_PCT) ? 1U : 0U;
+    ctx->manual_duty  = (ctx->manual_state != 0U) ? clamped : FCCU_FAN_DUTY_MIN_PCT;
+
     if (ctx->mode == FAN_MODE_MANUAL) {
-        ctx->duty = (ctx->state != 0U) ? clamped : FCCU_FAN_DUTY_MIN_PCT;
+        ctx->state = ctx->manual_state;
+        ctx->duty  = ctx->manual_duty;
     }
 }
 

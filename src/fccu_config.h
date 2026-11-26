@@ -2,9 +2,13 @@
 #define INZYNIERKA_FCCU_CONFIG_H
 
 /* --- ZAWÓR PURGE (Anti-Idiot & domyślne wartości) --- */
-#define FCCU_PURGE_DURATION_DEFAULT_MS  100U
-#define FCCU_PURGE_DURATION_MIN_MS      10U
-#define FCCU_PURGE_DURATION_MAX_MS      500U
+#define FCCU_PURGE_DURATION_DEFAULT_MS          100U
+#define FCCU_PURGE_DURATION_MIN_MS              10U
+#define FCCU_PURGE_DURATION_MAX_MS              500U
+#define FCCU_PURGE_VOLTAGE_DEFAULT_MV           20000U /* Domyślny próg: 20.0 V */
+#define FCCU_PURGE_VOLTAGE_MIN_VALID_MV         5000   /* Poniżej 5.0 V ogniwo uznajemy za wyłączone (brak fałszywych purge) */
+#define FCCU_PURGE_VOLTAGE_COOLDOWN_DEFAULT_S   5U     /* Min. odstęp między przedmuchami od napięcia [s] */
+#define FCCU_MCU_VOLTAGE_TIMEOUT_MS             2000U  /* Maks. wiek ramki 0x104 z MCU [ms] */
 
 /* --- CHŁODZENIE (Wentylator: Linear & PID) --- */
 #define FCCU_FAN_DUTY_MIN_PCT           0U
@@ -14,8 +18,11 @@
 #define FCCU_FAN_PID_SETPOINT_C         30
 
 /* --- PRZEPŁYWOMIERZ --- */
-#define FCCU_FLOW_K_FACTOR              1000U
+#define FCCU_FLOW_K_FACTOR              1000U /* Impulsy na 1 Ln (1 impuls = 0.001 Ln) */
 #define FCCU_FLOW_SCALE_X100            6000U /* (60 s/min * 100 dla skali 0.01) */
+#define FCCU_FLOW_DEBOUNCE_US           1000U /* 1 ms -> maks. 1000 Hz (60 Ln/min) */
+#define FCCU_FLOW_TIMEOUT_MS            1500U /* Po 1.5 s bez impulsu przepływ = 0 */
+#define FCCU_FLOW_FAST_PERIOD_MS        10U   /* 10 ms = 100 Hz (1U = 1000 Hz) */
 
 /* --- BEZPIECZEŃSTWO (Fail-Safe) --- */
 /* Maksymalny czas bez ramki CAN z nadrzędnego sterownika przed awaryjnym STOP */
@@ -54,5 +61,20 @@
 
 /* 0 = tylko flow_meter, fan, main_valve, purge_valve | 1 = pełne ADC + BME280 */
 #define FCCU_USE_EXTRA_SENSORS          0
+
+/* --- TERMISTOR OGNIWA (J7 T_R -> IC2 -> GPIO10 / ADC1_CH9) --- */
+#define FCCU_USE_FC_TEMP                1
+#define FCCU_FC_TEMP_TYPE_PT1000        0      /* 0 = NTC 1k, 1 = Pt1000 */
+#define FCCU_FC_TEMP_VCC_MV             3300   /* Zasilanie dzielnika R58 (+3.3V) */
+#define FCCU_FC_TEMP_PULLUP_OHM         10000  /* R58 = 10k */
+#define FCCU_FC_TEMP_OPAMP_GAIN_NUM     1      /* 1 = wtórnik; jeśli wzmacniacz 11x -> wpisz 11 */
+#define FCCU_FC_TEMP_OPAMP_GAIN_DEN     1
+#define FCCU_FC_TEMP_R25_OHM            1000   /* Rezystancja czujnika w 25 degC (1k) */
+#define FCCU_FC_TEMP_NTC_BETA_K         3950   /* Stała Beta NTC (zmień wg noty termistora) */
+
+/* --- MASZYNA STANÓW --- */
+/* 1 = start w STATE_INIT i natychmiastowe przejście do STATE_RUNNING (bez stacyjki)
+ * 0 = oczekiwanie w STATE_INIT na sygnał stacyjki / ramkę CAN 0x510=1 */
+#define FCCU_AUTO_START_FROM_INIT       1
 
 #endif //INZYNIERKA_FCCU_CONFIG_H
